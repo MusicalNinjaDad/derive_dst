@@ -3,9 +3,14 @@
     unstable_error_generic_member_access,
     feature(error_generic_member_access)
 )]
+#![cfg_attr(unstable_ptr_metadata, feature(ptr_metadata))]
 // `has_*` is only emitted for build_safely's known features; `error_generic_member_access`
-// goes via `OtherFeature`, which only ever emits `unstable_*`
-#![cfg(all(has_default_field_values, unstable_error_generic_member_access))]
+// and `ptr_metadata` go via `OtherFeature`, which only ever emits `unstable_*`
+#![cfg(all(
+    has_default_field_values,
+    unstable_error_generic_member_access,
+    unstable_ptr_metadata
+))]
 // field names mimic the C++ structs these DSTs mirror
 #![allow(non_snake_case)]
 
