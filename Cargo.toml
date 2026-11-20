@@ -1,0 +1,29 @@
+[package]
+name = "derive_dst"
+version = "0.1.0"
+edition = "2024"
+readme = "README.md"
+description = "Derive macro for DST structs: generates an allocation constructor (`new`), a layout constructor (`layout_for`) and a dedicated `InvalidFoo` error type. Requires nightly."
+authors = ["Mike Foster <https://github.com/MusicalNinjaDad>"]
+keywords = ["derive", "DST", "unsized", "layout", "ffi"]
+repository = "https://github.com/MusicalNinjaDad/derive_dst"
+categories = ["development-tools", "no-std"]
+license = "MIT"
+exclude = [".github", ".devcontainer", ".vibe"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "3.0.9", features = ["full", "extra-traits"] }
+proc-macro2 = "1.0.106"
+proc_macro2_diagnostic = "0.8.1"
+quote = "1.0.45"
+
+[dev-dependencies]
+trybuild = "1.0.116"
+
+[build-dependencies]
+build_safely = "0.6.1"
+
+[workspace]

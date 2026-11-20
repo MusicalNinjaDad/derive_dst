@@ -1,0 +1,14 @@
+# derive_dst requires a nightly toolchain: the generated code relies on
+# `default_field_values` and `error_generic_member_access`, and the proc-macro
+# itself uses `proc_macro_diagnostic` (via build_safely) for rich diagnostics.
+full:
+  fail-fast: false
+  matrix:
+    channel: ["nightly"]
+    bootstrap: ["0", "1"]
+
+minimal:
+  fail-fast: false
+  matrix:
+    channel: ["nightly"]
+    bootstrap: ["1"]
