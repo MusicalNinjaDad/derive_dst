@@ -1,0 +1,12 @@
+error: the last field of a DST struct must be an unsized slice, e.g. `DevicePath: [u16]`
+  --> tests/compilation/fail_SizedTail.rs:7:10
+   |
+ 7 | #[derive(DST)]
+   |          ^^^
+   |
+help: this field is sized
+  --> tests/compilation/fail_SizedTail.rs:10:17
+   |
+10 |     DevicePath: [u16; 4],
+   |                 ^^^^^^^^
+   = note: this error originates in the derive macro `DST` (in Nightly builds, run with -Z macro-backtrace for more info)

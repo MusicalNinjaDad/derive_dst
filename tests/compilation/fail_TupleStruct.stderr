@@ -1,0 +1,12 @@
+error: DST can only be derived for a struct with named fields
+ --> tests/compilation/fail_TupleStruct.rs:7:10
+  |
+7 | #[derive(DST)]
+  |          ^^^
+  |
+help: tuple structs are not supported
+ --> tests/compilation/fail_TupleStruct.rs:8:19
+  |
+8 | struct TupleStruct(u32, [u16]);
+  |                   ^^^^^^^^^^^^
+  = note: this error originates in the derive macro `DST` (in Nightly builds, run with -Z macro-backtrace for more info)

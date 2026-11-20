@@ -10,7 +10,10 @@ fn main() -> Result<()> {
     // needed by crates *using* `#[derive(DST)]` for the field-default syntax
     ac.emit_unstable_feature(default_field_values, &allowed_features);
     // needed by crates *using* `#[derive(DST)]` for the generated `Error::provide`
-    ac.emit_unstable_feature(OtherFeature("error_generic_member_access".to_string()), &allowed_features);
+    ac.emit_unstable_feature(
+        OtherFeature("error_generic_member_access".to_string()),
+        &allowed_features,
+    );
 
     Ok(())
 }
