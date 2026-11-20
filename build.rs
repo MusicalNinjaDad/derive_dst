@@ -14,6 +14,8 @@ fn main() -> Result<()> {
         OtherFeature("error_generic_member_access".to_string()),
         &allowed_features,
     );
+    // needed by crates *using* `#[derive(DST)]` for the generated `ptr::from_raw_parts_mut` call
+    ac.emit_unstable_feature(OtherFeature("ptr_metadata".to_string()), &allowed_features);
 
     Ok(())
 }

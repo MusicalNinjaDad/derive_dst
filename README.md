@@ -63,6 +63,7 @@ impl DeviceDetails {
 ```rust
 #![feature(default_field_values)]
 #![feature(error_generic_member_access)]
+#![feature(ptr_metadata)]
 use derive_dst::DST;
 
 #[repr(C)]
@@ -78,10 +79,11 @@ pub(crate) struct DeviceDetails {
 
 ## Requirements & contract
 
-- **Nightly toolchain** (pinned via `rust-toolchain.toml`). Two nightly features are required in
+- **Nightly toolchain** (pinned via `rust-toolchain.toml`). Three nightly features are required in
   the crate *using* the derive:
   - `default_field_values` — for the `field: Type = expr` defaults in the struct declaration
   - `error_generic_member_access` — for the generated `Error::provide` implementation
+  - `ptr_metadata` — for the generated `ptr::from_raw_parts_mut` call in `new`
 
   (The proc-macro crate itself additionally uses `proc_macro_diagnostic`, detected via
   [`build_safely`](https://crates.io/crates/build_safely), for rich compiler errors.)
@@ -99,6 +101,6 @@ by compile-fail tests (`tests/compilation/`).
 ## Safety
 
 `new` allocates with `Global.allocate_zeroed` using the layout computed by `layout_for`, forms
-the fat pointer from a `*mut [T]` tail cast (metadata = element count) and boxes it. The layout
-is validated against the requested `size` before any allocation, so the returned `Box<Self>` is
-always correctly sized, aligned and initialised.
+the fat pointer with `ptr::from_raw_parts_mut` (thin data pointer + element count as metadata)
+and boxes it. The layout is validated against the requested `size` before any allocation, so the
+returned `Box<Self>` is always correctly sized, aligned and initialised.

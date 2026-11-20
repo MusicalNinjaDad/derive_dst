@@ -9,6 +9,7 @@
 //! ```
 //! #![feature(default_field_values)]
 //! #![feature(error_generic_member_access)]
+//! #![feature(ptr_metadata)]
 //! use derive_dst::DST;
 //!
 //! #[repr(C)]
@@ -41,8 +42,9 @@
 //! # Requirements
 //!
 //! - a **nightly** toolchain (pinned via `rust-toolchain.toml`); the crate *using* the derive needs
-//!   - `#![feature(default_field_values)]` for the `field: Type = expr` defaults, and
-//!   - `#![feature(error_generic_member_access)]` for the generated `Error::provide`.
+//!   - `#![feature(default_field_values)]` for the `field: Type = expr` defaults,
+//!   - `#![feature(error_generic_member_access)]` for the generated `Error::provide`, and
+//!   - `#![feature(ptr_metadata)]` for the generated `ptr::from_raw_parts_mut` call in `new`.
 //!
 //!   The proc-macro itself gets rich, spanned compiler errors from
 //!   [`proc_macro2_diagnostic`](https://github.com/MusicalNinjaDad/proc_macro2_diagnostic), which

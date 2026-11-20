@@ -208,8 +208,8 @@ impl<'ast> DstStruct<'ast> {
                     "`layout` computed by [`layout_for`][Self::layout_for] for `size` and zeroed, so it is ",
                     "valid for reads & writes of that layout; `count` is the number of `",
                     stringify!(#elem),
-                    "` tail elements used to build that layout, so the metadata of `raw` is correct ",
-                    "for `Self` (last field: `",
+                    "` tail elements used to build that layout, so `ptr::from_raw_parts_mut` ",
+                    "attaches `count` as the metadata of `raw`, correct for `Self` (last field: `",
                     stringify!(#tail_ty),
                     "`). Zero is a valid bit pattern for the tail and every head field is overwritten ",
                     "with its default; the pointer is moved into exactly one `Box` and not used afterwards."
@@ -225,11 +225,10 @@ impl<'ast> DstStruct<'ast> {
                         ::core::result::Result::Err(_) => ::std::alloc::handle_alloc_error(layout),
                     };
 
-                    let tail = ::core::ptr::slice_from_raw_parts_mut(
-                        raw.cast::<#elem>().as_ptr(),
+                    let raw = ::core::ptr::from_raw_parts_mut::<Self>(
+                        raw.cast::<()>().as_ptr(),
                         count,
                     );
-                    let raw = tail as *mut Self;
 
                     #[expect(
                         unsafe_code,

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `new` now builds the `*mut Self` with `core::ptr::from_raw_parts_mut` (thin data pointer +
+  `count` metadata) instead of casting a `*mut [T]`; crates using the derive now also need
+  `#![feature(ptr_metadata)]`.
+
 ## [0.1.0] - 2026-11-20
 
 ### Added
