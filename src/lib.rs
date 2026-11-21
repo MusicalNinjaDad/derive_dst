@@ -369,34 +369,26 @@ impl<'ast> DstStruct<'ast> {
         // the `Uninit` struct verbatim, except `derive` & `doc` (see `copyable_meta`).
         let struct_attrs: Vec<Attribute> = self.attrs.iter().filter_map(copyable_attr).collect();
         // Each sized head field, mirrored with its own attributes onto the `Uninit` field.
-        let uninit_head_fields = self
-            .head
-            .iter()
-            .map(|field| {
-                let attrs = mirrored_field_attrs(field);
-                let ident = field.ident.as_ref().expect("named fields");
-                let ty = &field.ty;
-                quote! { #(#attrs)* #ident: ::core::mem::MaybeUninit<#ty>, }
-            })
-            .collect::<Vec<_>>();
+        let uninit_head_fields = self.head.iter().map(|field| {
+            let attrs = mirrored_field_attrs(field);
+            let ident = field.ident.as_ref().expect("named fields");
+            let ty = &field.ty;
+            quote! { #(#attrs)* #ident: ::core::mem::MaybeUninit<#ty>, }
+        });
         let tail_ident = self.tail.ident.as_ref().expect("named fields");
         let tail_attrs = mirrored_field_attrs(self.tail);
         let uninit_tail_field =
             quote! { #(#tail_attrs)* #tail_ident: [::core::mem::MaybeUninit<#elem>], };
         // one `layout_header` extend per sized head field, carrying that field's `cfg` gates
         // (so a `#[cfg]`-gated field is skipped here too, exactly as in the structs)
-        let header_extends = self
-            .head
-            .iter()
-            .map(|field| {
-                let gates = field_cfg_gates(field);
-                let ty = &field.ty;
-                quote! {
-                    #(#gates)*
-                    prefix = prefix.extend(::core::alloc::Layout::new::<#ty>())?.0;
-                }
-            })
-            .collect::<Vec<_>>();
+        let header_extends = self.head.iter().map(|field| {
+            let gates = field_cfg_gates(field);
+            let ty = &field.ty;
+            quote! {
+                #(#gates)*
+                prefix = prefix.extend(::core::alloc::Layout::new::<#ty>())?.0;
+            }
+        });
         // The tail slice's pointer-metadata type: the type used for the tail element count
         // throughout the generated signatures & returns (`usize` for `[T]`, but spelled via
         // `Pointee` so the signatures mirror the fat pointer's metadata).
