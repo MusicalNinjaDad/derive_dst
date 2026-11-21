@@ -306,6 +306,16 @@ impl<'ast> DstStruct<'ast> {
                         count,
                     );
 
+                    // SAFETY:
+                    // **No double-free risk**
+                    // - this pointer will not be added to a second box, or used in any other way after this
+                    // **Memory layout is correct**
+                    // - Pointer was allocated in a single allocation above by Global
+                    // - Memory is initialised via allocate_zeroed
+                    // - Zero values are valid for T                                  <- **NEEDS UPDATE NOT TRUE**
+                    // - Layout is correct for a DeviceDetails (see DeviceDetils::layout_for)
+                    // - Metadata is correct - numwords is count of elements in unsized tail [T]. The value
+                    //   used to generate the layout was provided by layout_for and used in from_raw_parts_mut
                     let mut boxed = unsafe { ::std::boxed::Box::from_raw(wide) };
                     #(boxed.#head_idents = #defaults;)*
 
