@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The generated layout code is now DRY: the sized head's layout is computed once in a shared
-  `layout_header()` helper, head+tail assembly lives in `layout_with_header(header, count)`, and the
+  `layout_header()` helper, head+tail assembly lives in `extend_with_tail(header, count)`, and the
   `unsafe` allocate → `from_raw_parts_mut` → `Box::from_raw` sequence lives in exactly one place, the
   new `new_uninit_for((Layout, tail_offset, count))` helper (returns `(Box<UninitFoo>, (Layout,
   tail_offset, count))`, no `Result` — the layout is taken as given). `layout_for_size` /

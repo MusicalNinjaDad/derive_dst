@@ -37,7 +37,7 @@ writing your own `pub fn new` that wraps these helpers, and no implementation de
   unsized tail and the tail element count (the tail slice's `Pointee::Metadata`, i.e. the
   fat-pointer metadata — a `usize` for `[T]`). They are built from two shared helpers:
   `Foo::layout_header() -> Result<Layout, LayoutError>` (the sized head's layout, computed once) and
-  `Foo::layout_with_header(header, count) -> Result<(Layout, usize, count), LayoutError>` (head +
+  `Foo::extend_with_tail(header, count) -> Result<(Layout, usize, count), LayoutError>` (head +
   tail of `count` elements, padded to alignment).
 - On failure all of the above return **`core::alloc::LayoutError`** — only ever produced by a
   genuinely failing `Layout` computation (e.g. the tail array overflowing `isize::MAX`).
@@ -118,7 +118,7 @@ impl DeviceDetails {
 //   -> `Result<(Box<UninitDeviceDetails>, (Layout, usize, count)), LayoutError>`
 // - `DeviceDetails::new_uninit_for((layout, offset, count))` — the single allocation site
 //   -> `(Box<UninitDeviceDetails>, (Layout, usize, count))`
-// - `DeviceDetails::layout_header()` / `layout_with_header(header, count)` — the head/tail
+// - `DeviceDetails::layout_header()` / `extend_with_tail(header, count)` — the head/tail
 //   layout helpers shared by `layout_for_size` / `layout_for_count`
 // - `UninitDeviceDetails::assume_init(Box<Self>) -> Box<DeviceDetails>` (unsafe)
 // - `DeviceDetails::layout_for_size(size)` / `layout_for_count(count)`

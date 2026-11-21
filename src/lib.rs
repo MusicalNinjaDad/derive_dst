@@ -70,7 +70,7 @@
 //!   for `[T]`) for a buffer of `size` bytes or of `count` tail elements (the mirror has the
 //!   identical layout, so this serves both). They are built from two shared helpers:
 //!   `DeviceDetails::layout_header() -> Result<Layout, LayoutError>` (the sized head's layout,
-//!   computed once) and `DeviceDetails::layout_with_header(header, count) -> Result<(Layout, usize, <[u16] as Pointee>::Metadata), LayoutError>`
+//!   computed once) and `DeviceDetails::extend_with_tail(header, count) -> Result<(Layout, usize, <[u16] as Pointee>::Metadata), LayoutError>`
 //!   (head + tail of `count` elements, padded to alignment).
 //!
 //! # Requirements
@@ -456,7 +456,7 @@ impl<'ast> DstStruct<'ast> {
                     let tail_bytes = size.saturating_sub(header.size());
                     let count: #count_ty = if elem_size == 0 { 0 } else { tail_bytes / elem_size };
 
-                    Self::layout_with_header(header, count)
+                    Self::extend_with_tail(header, count)
                 }
 
                 #[doc = "Calculate the `(layout, offset of the unsized tail, tail element count)`"]
@@ -477,7 +477,7 @@ impl<'ast> DstStruct<'ast> {
                     (::core::alloc::Layout, usize, #count_ty),
                     ::core::alloc::LayoutError,
                 > {
-                    Self::layout_with_header(Self::layout_header()?, count)
+                    Self::extend_with_tail(Self::layout_header()?, count)
                 }
 
                 #[doc = "The [`Layout`] of the sized head (everything before the unsized tail), computed once"]
@@ -502,7 +502,7 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "# Errors"]
                 #[doc = "Returns `Err(LayoutError)` if the tail array overflows or the layouts cannot be"]
                 #[doc = "extended."]
-                fn layout_with_header(
+                fn extend_with_tail(
                     header: ::core::alloc::Layout,
                     count: #count_ty,
                 ) -> ::core::result::Result<
