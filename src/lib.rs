@@ -296,14 +296,11 @@ impl<'ast> DstStruct<'ast> {
             .push(syn::parse_quote! { #elem: ::core::marker::Sized });
 
         quote! {
-            #[doc = concat!(
-                "`MaybeUninit` mirror of [`", stringify!(#name), "`]: identical `repr(C)` layout, but every "
-            )]
-            #[doc = concat!(
-                "field is wrapped in `MaybeUninit`, so any bit pattern — including a fresh, uninitialised ",
-                "allocation — is a valid value. Constructed by `new_uninit_for_size` / `new_uninit_for_count`; ",
-                "converted back to the initialised type with [`Self::assume_init`]."
-            )]
+            #[doc = concat!("`MaybeUninit` mirror of [`", stringify!(#name), "}`]: identical `repr(C)` layout, but every field is")]
+            #[doc = "wrapped in `MaybeUninit`, so any bit pattern — including a fresh, uninitialised"]
+            #[doc = "allocation — is a valid value. Constructed by `new_uninit_for_size` /"]
+            #[doc = "`new_uninit_for_count`; converted back to the initialised type with"]
+            #[doc = "[`Self::assume_init`]."]
             #[derive(Debug)]
             #[repr(C)]
             struct #uninit #generics #where_clause {
@@ -394,17 +391,15 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "# Returns"]
                 #[doc = "The boxed mirror together with the `(Layout, tail offset, tail count)` tuple passed in."]
                 #[doc = ""]
-                #[doc = concat!(
-                    "# Implementation safety\n\n",
-                    "The internal `unsafe` block is sound: `raw` was allocated by `Global` with the ",
-                    "given `layout`, so it is valid for reads & writes of that layout; `count` is the ",
-                    "number of tail elements that layout was built for, so `ptr::from_raw_parts_mut` ",
-                    "attaches the correct metadata for the mirror (last field: `[MaybeUninit<",
-                    stringify!(#elem),
-                    ">]`). Every field of the mirror is `MaybeUninit<_>`, which is valid for ANY bit ",
-                    "pattern, so the uninitialised allocation is a valid pointee; the pointer is moved ",
-                    "into exactly one `Box` and not used afterwards."
-                )]
+                #[doc = "# Implementation safety"]
+                #[doc = ""]
+                #[doc = "The internal `unsafe` block is sound: `raw` was allocated by `Global` with the"]
+                #[doc = "given `layout`, so it is valid for reads & writes of that layout; `count` is the"]
+                #[doc = "number of tail elements that layout was built for, so `ptr::from_raw_parts_mut`"]
+                #[doc = concat!("attaches the correct metadata for the mirror (last field: `[MaybeUninit<", stringify!(#elem), ">]`).")]
+                #[doc = "Every field of the mirror is `MaybeUninit<_>`, which is valid for ANY bit pattern,"]
+                #[doc = "so the uninitialised allocation is a valid pointee; the pointer is moved into"]
+                #[doc = "exactly one `Box` and not used afterwards."]
                 fn new_uninit_for(
                     (layout, offset, count): (::core::alloc::Layout, usize, #count_ty),
                 ) -> (
