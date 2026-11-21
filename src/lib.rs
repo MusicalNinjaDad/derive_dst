@@ -65,7 +65,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
 use quote::{format_ident, quote};
 use syn::{
-    Data, DeriveInput, Expr, Field, Fields, Generics, Ident, Meta, Token, Type, Visibility,
+    Data, DeriveInput, Field, Fields, Generics, Ident, Meta, Token, Type, Visibility,
     punctuated::Punctuated, spanned::Spanned,
 };
 
@@ -213,17 +213,15 @@ impl<'ast> DstStruct<'ast> {
         let err = format_ident!("Invalid{}", name);
         let (impl_generics, ty_generics, where_clause) = self.generics.split_for_impl();
 
-        let head_idents: Vec<&Ident> = self
+        let head_idents = self
             .head
             .iter()
-            .map(|field| field.ident.as_ref().expect("named fields"))
-            .collect();
-        let head_tys: Vec<&Type> = self.head.iter().map(|field| &field.ty).collect();
-        let defaults: Vec<&Expr> = self
+            .map(|field| field.ident.as_ref().expect("named fields"));
+        let head_tys = self.head.iter().map(|field| &field.ty);
+        let defaults = self
             .head
             .iter()
-            .map(|field| &field.default.as_ref().expect("validated default").1)
-            .collect();
+            .map(|field| &field.default.as_ref().expect("validated default").1);
         let tail_ty = &self.tail.ty;
         let elem = self.tail_elem;
 
