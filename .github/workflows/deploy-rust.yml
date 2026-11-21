@@ -12,7 +12,7 @@ jobs:
     permissions:
       contents: read
       issues: write
-    uses: ./.github/workflows/rust-stability.yml
+    uses: ./.github/workflows/rust.yml
 
   version:
     runs-on: ubuntu-latest

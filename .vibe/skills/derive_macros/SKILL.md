@@ -127,7 +127,7 @@ fn main() -> Result<()> {
   profile = "default"
   ```
 
-  and keep the CI matrix nightly-only (`.github/workflows/.config/matrix.yml`).
+  and let CI (`.github/workflows/rust.yml`) run on that pinned toolchain.
 - `.cargo/config.toml` keeps the author's aliases (`bld = "ninja build"`, `stage = "ninja stage"`);
   see the `cargo-stage` skill for `cargo stage --strict --json` as the single verification command.
 
@@ -145,5 +145,5 @@ fn main() -> Result<()> {
   `CHANGELOG.md` (Keep a Changelog). Markdown is linted in the devcontainer (markdownlint with
   MD013/MD046 disabled — let the editor wrap lines).
 - Repo foundation (`.gitignore`, `.devcontainer/`, `.github/workflows/` incl. `rust.yml`,
-  `rust-stability.yml`, `deploy-rust.yml`, dependabot) is lifted from `try_v2` / `exit_safely`;
+  `deploy-rust.yml`, dependabot) is lifted from `try_v2` / `exit_safely`;
   keep the dependabot auto-merge workflow pointed at the right `owner/repo`.
