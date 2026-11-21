@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Both generated impl headers now carry explicit bounds — `where [T]: Pointee<Metadata = usize>,
+  T: Sized` — in a single place each: the tail slice's fat-pointer metadata is pinned to `usize` by
+  the bound (what the unsafe `from_raw_parts_mut` / `ptr::metadata` code relies on), and the tail
+  element is required to be `Sized` so `size_of::<T>()` / `Layout::array::<T>()` are well-defined.
+  Zero-sized tail elements (`tail: [()]`) are supported and tested: `layout_for_size` maps any
+  `size` to a count of 0 via `checked_div(..).unwrap_or(0)` — a named function that yields 0 on a
+  zero divisor instead of panicking or special-casing — and `layout_for_count` accepts any count.
+  No new dependencies or nightly features are required for any of this.
 - The generated layout code is now DRY: the sized head's layout is computed once in a shared
   `layout_header()` helper, head+tail assembly lives in `extend_with_tail(header, count)`, and the
   `unsafe` allocate → `from_raw_parts_mut` → `Box::from_raw` sequence lives in exactly one place, the

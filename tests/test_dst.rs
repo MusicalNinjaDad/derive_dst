@@ -291,3 +291,41 @@ fn new_uninit_returns_layout_offset_and_count_alongside_the_box() {
     assert_eq!((offset, count), (8, 4));
     assert_eq!(uninit.tail.len(), 4);
 }
+
+/// A zero-sized tail element is allowed: `size_of::<()>()` is 0, and the generated
+/// `checked_div(..).unwrap_or(0)` yields count 0 (no divide-by-zero panic).
+#[repr(C)]
+#[derive(Debug, PartialEq, Eq, DST)]
+struct ZstTail {
+    tag: u8 = 1,
+    tail: [()],
+}
+
+#[test]
+fn zst_tail_element_is_supported() {
+    // repr(C): tag (u8) at 0; the ZST tail occupies 0 bytes at offset 1
+    let (layout, offset, count) = ZstTail::layout_for_size(100).unwrap();
+    assert_eq!((layout.size(), layout.align(), offset, count), (1, 1, 1, 0));
+
+    // count-based layout accepts any count for a ZST tail (0 bytes either way)
+    let (layout, offset, count) = ZstTail::layout_for_count(5).unwrap();
+    assert_eq!((layout.size(), offset, count), (1, 1, 5));
+
+    let (uninit, (layout, offset, count)) = ZstTail::new_uninit_for_size(4).unwrap();
+    assert_eq!((layout.size(), offset, count), (1, 1, 0));
+    assert!(uninit.tail.is_empty());
+    // SAFETY: `tag` holds its declared default; the tail has no elements to initialise
+    let value = unsafe { uninit.assume_init() };
+    assert_eq!(value.tag, 1);
+    assert!(value.tail.is_empty());
+
+    let (mut uninit, (_layout, _offset, count)) = ZstTail::new_uninit_for_count(3).unwrap();
+    assert_eq!(count, 3);
+    assert_eq!(uninit.tail.len(), 3);
+    for unit in uninit.tail.iter_mut() {
+        unit.write(());
+    }
+    // SAFETY: `tag` default + every (zero-sized) tail element written
+    let value = unsafe { uninit.assume_init() };
+    assert_eq!(value.tail.len(), 3);
+}

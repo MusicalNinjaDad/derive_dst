@@ -84,7 +84,12 @@
 //!   uses `#![feature(proc_macro_diagnostic)]` internally when available (detected via
 //!   `build_safely`).
 //! - the annotated type must be a **struct with named fields** and **`#[repr(C)]`**;
-//! - the **last field must be an unsized slice** `[T]`; only the last field may be unsized;
+//! - the **last field must be an unsized slice** `[T]`; only the last field may be unsized. The
+//!   generated impl headers carry the explicit bounds `where [T]: Pointee<Metadata = usize>, T: Sized`
+//!   — pinning the tail's fat-pointer metadata to `usize` (what the unsafe code relies on) and making
+//!   `size_of::<T>()` / `Layout::array::<T>()` well-defined. Zero-sized elements (`tail: [()]`) are
+//!   allowed: `layout_for_size` then maps any `size` to a tail count of 0 (the divide is
+//!   `checked_div(..).unwrap_or(0)`, which cannot panic), while `layout_for_count` accepts any count;
 //! - sized fields *may* declare a default value (`cbSize: u32 = ...`); defaults are optional and are
 //!   written by the `new_uninit_for_*` constructors when present.
 //!
@@ -275,6 +280,26 @@ impl<'ast> DstStruct<'ast> {
         // throughout the generated signatures & returns (`usize` for `[T]`, but spelled via
         // `Pointee` so the signatures mirror the fat pointer's metadata).
         let count_ty = quote! { <[#elem] as ::core::ptr::Pointee>::Metadata };
+        // Both generated impl headers carry the same explicit bounds, in a single place each:
+        // - `[#elem]: Pointee<Metadata = usize>` pins the tail slice's fat-pointer metadata to
+        //   `usize`, so the count type in the signatures is known to be `usize` *by the bound*
+        //   (not just by projection normalization) — this is what the unsafe code in
+        //   `new_uninit_for` / `assume_init` relies on when attaching/carrying the metadata;
+        // - `#elem: Sized` makes `size_of::<#elem>()` / `Layout::array::<#elem>()` well-defined
+        //   (ZST elements like `()` are fine — they just make the element size 0).
+        let mut impl_where: syn::WhereClause = match &self.generics.where_clause {
+            Some(where_clause) => where_clause.clone(),
+            None => syn::WhereClause {
+                where_token: Default::default(),
+                predicates: Default::default(),
+            },
+        };
+        impl_where
+            .predicates
+            .push(syn::parse_quote! { [#elem]: ::core::ptr::Pointee<Metadata = usize> });
+        impl_where
+            .predicates
+            .push(syn::parse_quote! { #elem: ::core::marker::Sized });
 
         quote! {
             #[doc = concat!(
@@ -292,7 +317,7 @@ impl<'ast> DstStruct<'ast> {
                 #tail_vis #tail_ident: [::core::mem::MaybeUninit<#elem>],
             }
 
-            impl #impl_generics #name #ty_generics #where_clause {
+            impl #impl_generics #name #ty_generics #impl_where {
                 #[doc = "Allocate a buffer for a `Self` value of `size` bytes and return it boxed as the"]
                 #[doc = "`Uninit` mirror of `Self`, together with the `(Layout, tail offset, tail count)` tuple."]
                 #[doc = ""]
@@ -451,10 +476,13 @@ impl<'ast> DstStruct<'ast> {
                     let header = Self::layout_header()?;
 
                     let elem_size = ::core::mem::size_of::<#elem>();
-                    // a size smaller than the head maps to an empty tail; the caller validates the
-                    // result by comparing `layout.size()` with the requested `size`
+                    // named fns only (no `/`): a size smaller than the head saturates to an empty
+                    // tail; the caller validates the result by comparing `layout.size()` with the
+                    // requested `size`
                     let tail_bytes = size.saturating_sub(header.size());
-                    let count: #count_ty = if elem_size == 0 { 0 } else { tail_bytes / elem_size };
+                    // `checked_div` returns `None` on a zero divisor (ZST tail element) — map that
+                    // to a count of 0 instead of panicking or special-casing
+                    let count: #count_ty = tail_bytes.checked_div(elem_size).unwrap_or(0);
 
                     Self::extend_with_tail(header, count)
                 }
@@ -515,7 +543,7 @@ impl<'ast> DstStruct<'ast> {
                 }
             }
 
-            impl #impl_generics #uninit #ty_generics #where_clause {
+            impl #impl_generics #uninit #ty_generics #impl_where {
                 #[doc = "Convert into the fully initialised struct, reusing the same allocation."]
                 #[doc = ""]
                 #[doc = "# Safety"]

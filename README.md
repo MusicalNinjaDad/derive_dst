@@ -142,7 +142,12 @@ assert_eq!((layout.size(), tail_offset, count), (8, 4, 2));
   [`build_safely`](https://crates.io/crates/build_safely), for rich compiler errors.)
 - The annotated type must be a **struct with named fields** and **`#[repr(C)]`** (the whole point
   is a predictable, C-compatible layout).
-- The **last field must be an unsized slice** `[T]`; only the last field may be unsized.
+- The **last field must be an unsized slice** `[T]`; only the last field may be unsized. The
+  generated impl headers carry the explicit bounds `where [T]: Pointee<Metadata = usize>, T: Sized`
+  — pinning the tail's fat-pointer metadata to `usize` (what the unsafe code relies on) and making
+  `size_of::<T>()` / `Layout::array::<T>()` well-defined. Zero-sized elements (`tail: [()]`) are
+  allowed: `layout_for_size` then maps any `size` to a tail count of 0 (a `checked_div` that yields
+  0 on a zero divisor, so it cannot panic), while `layout_for_count` accepts any count.
 - Sized fields *may* declare a default value `field: Type = expr`; the `new_uninit_for_*`
   constructors write these.
 - Everything generated (the `UninitFoo` mirror and all methods) is **private to the module** the
