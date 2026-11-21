@@ -18,30 +18,47 @@
 //!     DevicePath: [u16],
 //! }
 //!
-//! let details = DeviceDetails::new(8).unwrap();
+//! let mut uninit = DeviceDetails::new_uninit(8).unwrap();
+//! // `cbSize` already holds its declared default; initialise the tail:
+//! for word in uninit.DevicePath.iter_mut() {
+//!     word.write(0);
+//! }
+//! // SAFETY: every field (the defaulted `cbSize` and all tail words) is initialised.
+//! let details = unsafe { uninit.assume_init() };
 //! assert_eq!(details.cbSize, 4);
 //! assert_eq!(details.DevicePath.len(), 2);
 //! ```
 //!
 //! the derive generates (with the same visibility as the struct):
 //!
+//! - `UninitDeviceDetails` — a `#[repr(C)]` **mirror struct** in which every field is wrapped in
+//!   [`MaybeUninit`] (`cbSize: MaybeUninit<u32>`, `DevicePath: [MaybeUninit<u16>]`). `MaybeUninit<T>`
+//!   is guaranteed to have the same size, alignment and ABI as `T` but no validity invariant, so the
+//!   mirror has a layout identical to `DeviceDetails` yet is a valid value for *any* bit pattern —
+//!   including a fresh, uninitialised allocation.
+//! - `DeviceDetails::new_uninit(size: usize) -> Result<Box<UninitDeviceDetails>, InvalidDeviceDetails>`
+//!   — a **safe** allocating constructor: it validates the requested size via
+//!   [`layout_for`][Self::layout_for], allocates a buffer of the correct layout, attaches the tail
+//!   element count as the pointer metadata and returns it boxed. Any sized field that declares a
+//!   default (`field: Type = expr`) is initialised with it (via [`MaybeUninit::write`]); everything
+//!   else is left for the caller to write.
+//! - `UninitDeviceDetails::assume_init(self: Box<Self>) -> Box<DeviceDetails>` — the single `unsafe`
+//!   boundary: once the caller has initialised every field, converts the box into the initialised
+//!   type. The typical pattern is a user-written `new` that calls `new_uninit`, performs any
+//!   additional initialisation and then calls `assume_init`.
+//! - `DeviceDetails::layout_for(size: usize) -> Result<(Layout, usize, usize), InvalidDeviceDetails>`
+//!   — returns the [`Layout`], the byte offset of the unsized tail and the number of tail elements
+//!   for a buffer of `size` bytes (the mirror has the identical layout, so this serves both).
 //! - `InvalidDeviceDetails` — a dedicated error enum with variants
 //!   `InvalidLayout(::core::alloc::LayoutError)` and `InvalidSize { requested: usize, valid: usize }`,
 //!   implementing `Debug`, `Clone`, `PartialEq`, `Eq`, `Display`, `From<LayoutError>` and
 //!   `core::error::Error` — including `Error::source`.
-//! - `DeviceDetails::new(size: usize) -> Result<Box<Self>, InvalidDeviceDetails>` — validates the
-//!   requested size via [`layout_for`][Self::layout_for], allocates a zeroed buffer of the correct
-//!   layout, initialises every sized field with its declared default (`field: Type = expr`) and
-//!   returns the value boxed.
-//! - `DeviceDetails::layout_for(size: usize) -> Result<(Layout, usize, usize), InvalidDeviceDetails>`
-//!   — returns the [`Layout`], the byte offset of the unsized tail and the number of tail elements
-//!   for a buffer of `size` bytes.
 //!
 //! # Requirements
 //!
 //! - a **nightly** toolchain (pinned via `rust-toolchain.toml`); the crate *using* the derive needs
-//!   - `#![feature(default_field_values)]` for the `field: Type = expr` defaults, and
-//!   - `#![feature(ptr_metadata)]` for the generated `ptr::from_raw_parts_mut` call in `new`.
+//!   - `#![feature(ptr_metadata)]` for the generated `ptr::from_raw_parts_mut` / `ptr::metadata` calls,
+//!   - `#![feature(default_field_values)]` only if sized fields declare `= expr` defaults.
 //!
 //!   The proc-macro itself gets rich, spanned compiler errors from
 //!   [`proc_macro2_diagnostic`](https://github.com/MusicalNinjaDad/proc_macro2_diagnostic), which
@@ -49,15 +66,14 @@
 //!   `build_safely`).
 //! - the annotated type must be a **struct with named fields** and **`#[repr(C)]`**;
 //! - the **last field must be an unsized slice** `[T]`; only the last field may be unsized;
-//! - every other (sized) field must declare a **default value** (`cbSize: u32 = ...`), which `new`
-//!   assigns after allocating zeroed memory — the tail element type `T` must therefore be valid
-//!   when zeroed (true for all primitive numeric types).
+//! - sized fields *may* declare a default value (`cbSize: u32 = ...`); defaults are optional and are
+//!   written by `new_uninit` when present.
 //!
 //! # Errors
 //!
-//! Misuse (not a struct, missing `repr(C)`, sized tail, unsized non-tail field, missing default)
-//! is reported at compile time with spanned diagnostics (via `proc_macro2_diagnostic`) and covered
-//! by compile-fail tests in `tests/compilation/`. At runtime, an invalid `size` yields
+//! Misuse (not a struct, missing `repr(C)`, sized tail, unsized non-tail field) is reported at
+//! compile time with spanned diagnostics (via `proc_macro2_diagnostic`) and covered by compile-fail
+//! tests in `tests/compilation/`. At runtime, an invalid `size` yields
 //! `InvalidFoo::InvalidSize { requested, valid }` or `InvalidFoo::InvalidLayout(..)`.
 
 use proc_macro::TokenStream as TokenStream1;
@@ -65,12 +81,14 @@ use proc_macro2::TokenStream as TokenStream2;
 use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
 use quote::{format_ident, quote};
 use syn::{
-    Data, DeriveInput, Field, Fields, Generics, Ident, Meta, Token, Type, Visibility,
+    Data, DeriveInput, Expr, Field, Fields, Generics, Ident, Meta, Token, Type, Visibility,
     punctuated::Punctuated, spanned::Spanned,
 };
 
 #[proc_macro_derive(DST)]
-/// Derives an allocating constructor and a layout constructor for a `#[repr(C)]` DST struct.
+/// Derives an `UninitFoo` mirror struct, a safe allocating constructor `Foo::new_uninit`, an
+/// `unsafe` `UninitFoo::assume_init` and a layout constructor `Foo::layout_for` for a
+/// `#[repr(C)]` DST struct.
 ///
 /// See the [crate-level documentation](crate) for the full contract and generated code.
 pub fn derive_dst(input: TokenStream1) -> TokenStream1 {
@@ -91,7 +109,8 @@ pub(crate) struct DstStruct<'ast> {
     vis: &'ast Visibility,
     name: &'ast Ident,
     generics: &'ast Generics,
-    /// The sized "head" fields (all but the last); each is validated to have a default `= expr`.
+    /// The sized "head" fields (all but the last); a declared `= expr` default is written by
+    /// `new_uninit`, but defaults are optional.
     head: Vec<&'ast Field>,
     /// The last field, of type `[T]`.
     tail: &'ast Field,
@@ -186,13 +205,6 @@ impl<'ast> DstStruct<'ast> {
                 }
                 _ => {}
             }
-            if field.default.is_none() {
-                return error("DST requires a default value (`= expr`) for every sized field")
-                    .add_help(
-                        field.span(),
-                        "add `= <expr>` after the type, e.g. `cbSize: u32 = size_of::<u32>() as u32`",
-                    );
-            }
             head.push(field);
         }
 
@@ -206,23 +218,39 @@ impl<'ast> DstStruct<'ast> {
         })
     }
 
-    /// Generates the `InvalidFoo` error type and the `new` / `layout_for` inherent methods.
+    /// Generates the `UninitFoo` mirror struct, the `InvalidFoo` error type and the
+    /// `new_uninit` / `assume_init` / `layout_for` methods.
     pub(crate) fn generate(&self) -> TokenStream2 {
         let vis = self.vis;
         let name = self.name;
+        let uninit = format_ident!("Uninit{}", name);
         let err = format_ident!("Invalid{}", name);
+        let generics = self.generics;
         let (impl_generics, ty_generics, where_clause) = self.generics.split_for_impl();
 
+        let head_vis = self.head.iter().map(|field| &field.vis);
         let head_idents = self
             .head
             .iter()
             .map(|field| field.ident.as_ref().expect("named fields"));
         let head_tys = self.head.iter().map(|field| &field.ty);
-        let defaults = self
+        // separate iterator for the second repetition site in `layout_for` (Map is not Copy)
+        let head_tys_layout = self.head.iter().map(|field| &field.ty);
+        // sized fields with a declared `= expr` default: `(ident, expr)` pairs written by new_uninit
+        let defaulted: Vec<(&Ident, &Expr)> = self
             .head
             .iter()
-            .map(|field| &field.default.as_ref().expect("validated default").1);
-        let tail_ty = &self.tail.ty;
+            .filter_map(|field| {
+                field
+                    .default
+                    .as_ref()
+                    .map(|(_eq, expr)| (field.ident.as_ref().expect("named fields"), expr))
+            })
+            .collect();
+        let d_idents = defaulted.iter().map(|(ident, _)| *ident);
+        let d_exprs = defaulted.iter().map(|(_, expr)| *expr);
+        let tail_vis = &self.tail.vis;
+        let tail_ident = self.tail.ident.as_ref().expect("named fields");
         let elem = self.tail_elem;
 
         quote! {
@@ -266,11 +294,27 @@ impl<'ast> DstStruct<'ast> {
                 }
             }
 
+            #[doc = concat!(
+                "`MaybeUninit` mirror of [`", stringify!(#name), "`]: identical `repr(C)` layout, but every "
+            )]
+            #[doc = concat!(
+                "field is wrapped in `MaybeUninit`, so any bit pattern — including a fresh, uninitialised ",
+                "allocation — is a valid value. Constructed by `new_uninit`; converted back to the ",
+                "initialised type with [`Self::assume_init`]."
+            )]
+            #[derive(Debug)]
+            #[repr(C)]
+            #vis struct #uninit #generics #where_clause {
+                #(#head_vis #head_idents: ::core::mem::MaybeUninit<#head_tys>,)*
+                #tail_vis #tail_ident: [::core::mem::MaybeUninit<#elem>],
+            }
+
             impl #impl_generics #name #ty_generics #where_clause {
-                #[doc = "Construct a new `Self` in a `Box`, allocating a buffer of `size` bytes."]
+                #[doc = "Allocate a buffer of `size` bytes and return it boxed as the `Uninit` mirror of `Self`."]
                 #[doc = ""]
-                #[doc = "Every sized field is initialised with its declared default (`field: Type = expr`);"]
-                #[doc = "the tail is zeroed (the tail element type must be valid when zeroed)."]
+                #[doc = "The allocation is **uninitialised**, except for any sized field that declares a default"]
+                #[doc = "(`field: Type = expr`), which is written here. Initialise the remaining fields with"]
+                #[doc = "[`MaybeUninit::write`], then convert with `assume_init` on the returned box."]
                 #[doc = ""]
                 #[doc = "# Errors"]
                 #[doc = "Returns `Err` if `size` is not a valid, correctly aligned and padded total size"]
@@ -279,19 +323,21 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = concat!(
                     "# Implementation safety\n\n",
                     "The internal `unsafe` block is sound: `raw` was allocated by `Global` with the ",
-                    "`layout` computed by [`layout_for`][Self::layout_for] for `size` and zeroed, so it is ",
-                    "valid for reads & writes of that layout; `count` is the number of `",
+                    "`layout` computed by [`layout_for`][Self::layout_for] for `size`, so it is valid for ",
+                    "reads & writes of that layout; `count` is the number of tail elements used to build ",
+                    "that layout, so `ptr::from_raw_parts_mut` attaches the correct metadata for the ",
+                    "mirror (last field: `[MaybeUninit<",
                     stringify!(#elem),
-                    "` tail elements used to build that layout, so `ptr::from_raw_parts_mut` ",
-                    "attaches `count` as the metadata of `raw`, correct for `Self` (last field: `",
-                    stringify!(#tail_ty),
-                    "`). Zero is a valid bit pattern for the tail and every head field is overwritten ",
-                    "with its default; the pointer is moved into exactly one `Box` and not used afterwards."
+                    ">]`). Every field of the mirror is `MaybeUninit<_>`, which is valid for ANY bit ",
+                    "pattern, so the uninitialised allocation is a valid pointee; the pointer is moved ",
+                    "into exactly one `Box` and not used afterwards."
                 )]
-                pub fn new(size: usize) -> ::core::result::Result<::std::boxed::Box<Self>, #err> {
+                pub fn new_uninit(
+                    size: usize,
+                ) -> ::core::result::Result<::std::boxed::Box<#uninit #ty_generics>, #err> {
                     let (layout, _offset, count) = Self::layout_for(size)?;
 
-                    let raw = match <::std::alloc::Global as ::core::alloc::Allocator>::allocate_zeroed(
+                    let raw = match <::std::alloc::Global as ::core::alloc::Allocator>::allocate(
                         &::std::alloc::Global,
                         layout,
                     ) {
@@ -299,10 +345,8 @@ impl<'ast> DstStruct<'ast> {
                         ::core::result::Result::Err(_) => ::std::alloc::handle_alloc_error(layout),
                     };
 
-                    let data_pointer = raw.cast::<()>().as_ptr();
-
-                    let wide = ::core::ptr::from_raw_parts_mut::<Self>(
-                        data_pointer,
+                    let wide = ::core::ptr::from_raw_parts_mut::<#uninit #ty_generics>(
+                        raw.cast::<()>().as_ptr(),
                         count,
                     );
 
@@ -310,20 +354,24 @@ impl<'ast> DstStruct<'ast> {
                     // **No double-free risk**
                     // - this pointer will not be added to a second box, or used in any other way after this
                     // **Memory layout is correct**
-                    // - Pointer was allocated in a single allocation above by Global
-                    // - Memory is initialised via allocate_zeroed
-                    // - Zero values are valid for T                                  <- **NEEDS UPDATE NOT TRUE**
-                    // - Layout is correct for a DeviceDetails (see DeviceDetils::layout_for)
-                    // - Metadata is correct - numwords is count of elements in unsized tail [T]. The value
-                    //   used to generate the layout was provided by layout_for and used in from_raw_parts_mut
+                    // - Pointer was allocated in a single allocation above by Global with the layout
+                    //   computed by layout_for for `size`
+                    // **Metadata is correct**
+                    // - `count` is the number of tail elements used to build that layout, provided by
+                    //   layout_for and used in from_raw_parts_mut
+                    // **The pointee is valid for any bytes**
+                    // - every field of the mirror is `MaybeUninit<_>` (no validity invariant), so the
+                    //   uninitialised allocation is a valid value of the mirror type
                     let mut boxed = unsafe { ::std::boxed::Box::from_raw(wide) };
-                    #(boxed.#head_idents = #defaults;)*
+
+                    // declared defaults (`field: Type = expr`) are written safely via MaybeUninit::write
+                    #(boxed.#d_idents.write(#d_exprs);)*
 
                     ::core::result::Result::Ok(boxed)
                 }
 
                 #[doc = "Calculate the `(layout, offset of the unsized tail, number of tail elements)`"]
-                #[doc = "for a `Self` buffer of `size` bytes."]
+                #[doc = "for a `Self` buffer of `size` bytes. The `Uninit` mirror has the identical layout."]
                 #[doc = ""]
                 #[doc = "# Errors"]
                 #[doc = "Returns `Err(InvalidLayout(..))` if the layout cannot be computed and"]
@@ -332,14 +380,14 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = ""]
                 #[doc = "# SAFETY"]
                 #[doc = "The correctness of this layout and the tail offset is relied upon by unsafe code"]
-                #[doc = "in [`new`][Self::new]."]
+                #[doc = "in [`new_uninit`][Self::new_uninit]."]
                 pub fn layout_for(
                     size: usize,
                 ) -> ::core::result::Result<(::core::alloc::Layout, usize, usize), #err> {
                     // sequential `extend` reproduces the repr(C) placement of the sized head
                     let mut prefix = ::core::alloc::Layout::new::<()>();
                     #(
-                        prefix = prefix.extend(::core::alloc::Layout::new::<#head_tys>())?.0;
+                        prefix = prefix.extend(::core::alloc::Layout::new::<#head_tys_layout>())?.0;
                     )*
 
                     let elem_size = ::core::mem::size_of::<#elem>();
@@ -363,6 +411,33 @@ impl<'ast> DstStruct<'ast> {
                     }
 
                     ::core::result::Result::Ok((layout, offset, count))
+                }
+            }
+
+            impl #impl_generics #uninit #ty_generics #where_clause {
+                #[doc = "Convert into the fully initialised struct, reusing the same allocation."]
+                #[doc = ""]
+                #[doc = "# Safety"]
+                #[doc = "Every field of `self` must have been initialised: each sized field (a `MaybeUninit`)"]
+                #[doc = "via [`MaybeUninit::write`], and every element of the unsized tail likewise."]
+                #[doc = "Reading a field that was never written is undefined behaviour."]
+                pub unsafe fn assume_init(
+                    self: ::std::boxed::Box<Self>,
+                ) -> ::std::boxed::Box<#name #ty_generics> {
+                    let raw = ::std::boxed::Box::into_raw(self);
+                    // The mirror and the original have identical layouts (both `repr(C)`, and
+                    // `MaybeUninit<T>` is guaranteed to have the same size, alignment and ABI as `T`),
+                    // and the tail metadata (element count) is carried over unchanged.
+                    let wide = ::core::ptr::from_raw_parts_mut::<#name #ty_generics>(
+                        raw.cast::<()>(),
+                        ::core::ptr::metadata(raw),
+                    );
+                    // SAFETY:
+                    // - the caller guarantees (see `# Safety` above) that every field is initialised,
+                    //   so the pointee is a valid `#name` value
+                    // - layout and metadata are identical to the mirror's, so the fat pointer is correct
+                    // - the pointer is moved into exactly one `Box` and not used afterwards
+                    unsafe { ::std::boxed::Box::from_raw(wide) }
                 }
             }
         }

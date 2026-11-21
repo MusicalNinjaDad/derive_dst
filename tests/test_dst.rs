@@ -35,36 +35,65 @@ struct MultiHead {
     tail: [u8],
 }
 
+/// Defaults are optional: no sized field is required to declare a `= expr`.
+#[repr(C)]
+#[derive(Debug, PartialEq, Eq, DST)]
+struct NoDefaults {
+    a: u32,
+    tail: [u8],
+}
+
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq, DST)]
 #[expect(
     unevaluated_default_field_value,
-    reason = "default is only evaluated during construction; we test it via `Generic::new`"
+    reason = "default is only evaluated during construction; we test it via `Generic::new_uninit`"
 )]
 struct Generic<T> {
     tag: u8 = 7,
     items: [T],
 }
 
+/// `new_uninit` + write the tail + `assume_init`.
+fn init_details(size: usize) -> Box<DeviceDetails> {
+    let mut uninit = DeviceDetails::new_uninit(size).unwrap();
+    // the declared default was already written by `new_uninit`
+    // SAFETY: `new_uninit` wrote the default into `cbSize`
+    assert_eq!(unsafe { uninit.cbSize.assume_init_read() }, 4);
+    for (i, word) in uninit.DevicePath.iter_mut().enumerate() {
+        word.write(0xA000 + i as u16);
+    }
+    // SAFETY: `cbSize` (default) and every `DevicePath` word are initialised
+    unsafe { uninit.assume_init() }
+}
+
 #[test]
-fn new_allocates_a_layout_identical_buffer() {
+fn new_uninit_allocates_a_layout_identical_buffer() {
     let shadow = DeviceDetailsShadow {
         cbSize: 4,
         DevicePath: [0; 1],
     };
 
-    let custom = DeviceDetails::new(size_of_val(&shadow)).unwrap();
+    // the Uninit-mirror has the same layout as the C shadow
+    let uninit = DeviceDetails::new_uninit(size_of_val(&shadow)).unwrap();
+    assert_eq!(Layout::for_value(&shadow), Layout::for_value(&*uninit));
+    assert_eq!(
+        offset_of!(DeviceDetailsShadow, cbSize),
+        offset_of!(UninitDeviceDetails, cbSize)
+    );
+    assert_eq!(offset_of!(DeviceDetailsShadow, DevicePath), 4);
 
+    let custom = init_details(size_of_val(&shadow));
     assert_eq!(Layout::for_value(&shadow), Layout::for_value(&*custom));
     assert_eq!(
         offset_of!(DeviceDetailsShadow, cbSize),
         offset_of!(DeviceDetails, cbSize)
     );
-    assert_eq!(offset_of!(DeviceDetailsShadow, DevicePath), 4);
     // the tail of a DST cannot be named in offset_of! without `offset_of_slice`;
     // layout_for reports its offset instead (checked in layout_for_reports_layout_offset_and_count)
     assert_eq!(custom.cbSize, 4);
     assert_eq!(custom.DevicePath.len(), 2);
+    assert_eq!(&custom.DevicePath[..], &[0xA000, 0xA001]);
 }
 
 #[test]
@@ -76,15 +105,15 @@ fn layout_for_reports_layout_offset_and_count() {
 }
 
 #[test]
-fn new_allows_an_empty_tail() {
-    let details = DeviceDetails::new(4).unwrap();
+fn new_uninit_allows_an_empty_tail() {
+    let details = init_details(4);
     assert_eq!(details.cbSize, 4);
     assert!(details.DevicePath.is_empty());
 }
 
 #[test]
-fn new_rejects_a_misaligned_size() {
-    let err = DeviceDetails::new(6).unwrap_err();
+fn new_uninit_rejects_a_misaligned_size() {
+    let err = DeviceDetails::new_uninit(6).err().unwrap();
     assert_eq!(
         err,
         InvalidDeviceDetails::InvalidSize {
@@ -100,8 +129,8 @@ fn new_rejects_a_misaligned_size() {
 }
 
 #[test]
-fn new_rejects_a_size_smaller_than_the_head() {
-    let err = DeviceDetails::new(2).unwrap_err();
+fn new_uninit_rejects_a_size_smaller_than_the_head() {
+    let err = DeviceDetails::new_uninit(2).err().unwrap();
     assert_eq!(
         err,
         InvalidDeviceDetails::InvalidSize {
@@ -113,7 +142,7 @@ fn new_rejects_a_size_smaller_than_the_head() {
 
 #[test]
 fn layout_errors_are_sourced() {
-    let err = DeviceDetails::new(usize::MAX).unwrap_err();
+    let err = DeviceDetails::new_uninit(usize::MAX).err().unwrap();
     assert!(matches!(err, InvalidDeviceDetails::InvalidLayout(_)));
 
     // Error::source
@@ -142,7 +171,15 @@ fn multi_head_layout_matches_repr_c() {
     assert_eq!(offset_of!(MultiHead, b), 4);
     assert_eq!(offset, 8); // tail offset, reported by layout_for
 
-    let multi = MultiHead::new(12).unwrap();
+    let mut uninit = MultiHead::new_uninit(12).unwrap();
+    // SAFETY: `new_uninit` wrote the declared defaults
+    assert_eq!(unsafe { uninit.a.assume_init_read() }, 1);
+    assert_eq!(unsafe { uninit.b.assume_init_read() }, 2);
+    for byte in uninit.tail.iter_mut() {
+        byte.write(0);
+    }
+    // SAFETY: all fields are initialised
+    let multi = unsafe { uninit.assume_init() };
     assert_eq!((multi.a, multi.b), (1, 2));
     assert_eq!(multi.tail.len(), 4);
 }
@@ -155,11 +192,18 @@ fn generic_tail() {
         (12, 2, 2, 5)
     );
 
-    let generic = Generic::<u16>::new(12).unwrap();
+    let mut uninit = Generic::<u16>::new_uninit(12).unwrap();
+    // SAFETY: `new_uninit` wrote the declared default
+    assert_eq!(unsafe { uninit.tag.assume_init_read() }, 7);
+    for item in uninit.items.iter_mut() {
+        item.write(0);
+    }
+    // SAFETY: all fields are initialised
+    let generic = unsafe { uninit.assume_init() };
     assert_eq!(generic.tag, 7);
     assert_eq!(generic.items.len(), 5);
 
-    let err = Generic::<u16>::new(11).unwrap_err();
+    let err = Generic::<u16>::new_uninit(11).err().unwrap();
     assert_eq!(
         err,
         InvalidGeneric::InvalidSize {
@@ -167,4 +211,30 @@ fn generic_tail() {
             valid: 12
         }
     );
+}
+
+#[test]
+fn defaults_are_optional() {
+    // repr(C): a at 0, tail [u8] at 4; total for count n = align_up(4 + n, 4)
+    let (layout, offset, count) = NoDefaults::layout_for(8).unwrap();
+    assert_eq!((layout.size(), layout.align(), offset, count), (8, 4, 4, 4));
+
+    let mut uninit = NoDefaults::new_uninit(8).unwrap();
+    uninit.a.write(42);
+    for byte in uninit.tail.iter_mut() {
+        byte.write(1);
+    }
+    // SAFETY: all fields are initialised
+    let value = unsafe { uninit.assume_init() };
+    assert_eq!(value.a, 42);
+    assert_eq!(&value.tail[..], &[1, 1, 1, 1]);
+}
+
+#[test]
+fn dropping_a_partially_initialised_mirror_is_safe() {
+    let mut uninit = DeviceDetails::new_uninit(8).unwrap();
+    uninit.DevicePath[0].write(1); // leave the rest uninitialised
+    // MaybeUninit fields have no drop glue, so dropping here runs no destructors on
+    // uninitialised bytes (no UB) and still frees the allocation
+    drop(uninit);
 }
