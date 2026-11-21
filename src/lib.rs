@@ -252,7 +252,6 @@ impl<'ast> DstStruct<'ast> {
         let generics = self.generics;
         let (impl_generics, ty_generics, where_clause) = self.generics.split_for_impl();
 
-        let head_vis = self.head.iter().map(|field| &field.vis);
         let head_idents = self
             .head
             .iter()
@@ -273,7 +272,6 @@ impl<'ast> DstStruct<'ast> {
             .collect();
         let d_idents = defaulted.iter().map(|(ident, _)| *ident);
         let d_exprs = defaulted.iter().map(|(_, expr)| *expr);
-        let tail_vis = &self.tail.vis;
         let tail_ident = self.tail.ident.as_ref().expect("named fields");
         let elem = self.tail_elem;
         // The tail slice's pointer-metadata type: the type used for the tail element count
@@ -313,8 +311,8 @@ impl<'ast> DstStruct<'ast> {
             #[derive(Debug)]
             #[repr(C)]
             struct #uninit #generics #where_clause {
-                #(#head_vis #head_idents: ::core::mem::MaybeUninit<#head_tys>,)*
-                #tail_vis #tail_ident: [::core::mem::MaybeUninit<#elem>],
+                #(#head_idents: ::core::mem::MaybeUninit<#head_tys>,)*
+                #tail_ident: [::core::mem::MaybeUninit<#elem>],
             }
 
             impl #impl_generics #name #ty_generics #impl_where {
