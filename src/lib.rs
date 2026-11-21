@@ -259,7 +259,7 @@ impl<'ast> DstStruct<'ast> {
             .map(|field| field.ident.as_ref().expect("named fields"));
         let head_tys = self.head.iter().map(|field| &field.ty);
         // repetition site in `layout_header` (Map is not Copy)
-        let head_tys_header = self.head.iter().map(|field| &field.ty);
+        let head_tys_header = head_tys.clone();
         // sized fields with a declared `= expr` default: `(ident, expr)` pairs written by new_uninit
         let defaulted: Vec<(&Ident, &Expr)> = self
             .head
