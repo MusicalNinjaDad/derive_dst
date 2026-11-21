@@ -12,7 +12,8 @@ jobs:
     permissions:
       contents: read
       issues: write
-    uses: ./.github/workflows/rust-stability.yml
+      actions: write
+    uses: ./.github/workflows/rust.yml
 
   version:
     runs-on: ubuntu-latest
@@ -32,7 +33,7 @@ jobs:
     needs:
       - version
       - quality-check
-    if: ${{ !(failure() || cancelled()) }}
+    if: ${{ needs.version.result == 'success' && needs.quality-check.result == 'success' }}
     environment: crates.io
     permissions:
       id-token: write

@@ -5,9 +5,12 @@ on:
     paths: 
     - "**.rs"
     - "Cargo.toml"
+    - "rust-toolchain.toml"
     - ".github/workflows/rust.yml"
   pull_request:
   workflow_call:
+  schedule:
+    - cron: '30 4 * * 6'
 
 env:
     CARGO_TERM_COLOR: always
@@ -24,63 +27,67 @@ jobs:
         with:
           concurrent_skipping: 'same_content_newer'
 
-  channels:
-    runs-on: ubuntu-latest
-    outputs:
-      strategy: ${{ steps.strategy.outputs.strategy }}
-    steps:
-    - uses: actions/checkout@v7.0.1
-    - name: install jaq
-      uses: taiki-e/install-action@v2.90.3
-      with:
-        tool: jaq
-    - name: process strategy
-      id: strategy
-      run: echo "strategy=$(jaq -c .minimal .github/workflows/.config/matrix.yml)" >> $GITHUB_OUTPUT
-
   test:
-    needs:
-      - skip_check
-      - channels
-    if: needs.skip_check.outputs.should_skip != 'true'
-
-    strategy: ${{ fromJson(needs.channels.outputs.strategy) }}
-    env:
-      RUSTC_BOOTSTRAP: ${{ matrix.bootstrap }}
+    needs: skip_check
+    if: ${{ github.event_name == 'workflow_call' || needs.skip_check.outputs.should_skip != 'true' }}
 
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v7.0.1
-    - run: rustup install --profile default ${{ matrix.channel }}
+    - name: Install latest toolchain from rust-toolchain.toml
+      run: |
+        rustup install
+        rustup update
     - name: Run tests
-      run: cargo +${{ matrix.channel }} test --no-fail-fast
+      run: cargo test --no-fail-fast
 
   lint:
-    needs:
-      - skip_check
-      - channels
-    if: needs.skip_check.outputs.should_skip != 'true'
-
-    strategy: ${{ fromJson(needs.channels.outputs.strategy) }}
-    env:
-      RUSTC_BOOTSTRAP: ${{ matrix.bootstrap }}
+    needs: skip_check
+    if: ${{ github.event_name == 'workflow_call' || needs.skip_check.outputs.should_skip != 'true' }}
 
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v7.0.1
-    - run: rustup install --profile default ${{ matrix.channel }}
+    - name: Install latest toolchain from rust-toolchain.toml
+      run: |
+        rustup install
+        rustup update
     - name: clippy
-      run: cargo +${{ matrix.channel }} clippy -- --deny warnings
+      run: cargo clippy -- --deny warnings
 
   fmt:
     needs: skip_check
-    if: needs.skip_check.outputs.should_skip != 'true'
+    if: ${{ github.event_name == 'workflow_call' || needs.skip_check.outputs.should_skip != 'true' }}
 
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v7.0.1
+    - name: Install latest toolchain from rust-toolchain.toml
+      run: |
+        rustup install
+        rustup update
     - name: fmt
       run: cargo fmt --check
+
+  report:
+    if: ${{ always() && github.event_name == 'schedule' }}
+    needs: [skip_check, test, lint, fmt]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+    - uses: actions/checkout@v7.0.1
+    - name: Create issue on failure
+      if: ${{ needs.skip_check.result == 'failure' || needs.test.result == 'failure' || needs.lint.result == 'failure' || needs.fmt.result == 'failure' }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        if gh issue list --state open --search "Weekly CI failed in:title" --json body --jq '.[].body' | grep -q "Run ID: $GITHUB_RUN_ID"; then
+          echo "Issue already exists for run $GITHUB_RUN_ID"
+        else
+          gh issue create --title "Weekly CI failed" --body "Run ID: $GITHUB_RUN_ID" --assignee "MusicalNinjaDad"
+        fi
