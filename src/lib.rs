@@ -18,7 +18,8 @@
 //!     DevicePath: [u16],
 //! }
 //!
-//! let (mut uninit, tail_offset, count) = DeviceDetails::new_uninit_for_size(8).unwrap();
+//! let (mut uninit, layout, tail_offset, count) = DeviceDetails::new_uninit_for_size(8).unwrap();
+//! assert_eq!(layout.size(), 8); // 8 is a valid size: 4-byte head + 2 x u16, correctly padded
 //! assert_eq!(tail_offset, 4);
 //! assert_eq!(count, 2);
 //! // `cbSize` already holds its declared default; initialise the tail:
@@ -40,30 +41,29 @@
 //!   is guaranteed to have the same size, alignment and ABI as `T` but no validity invariant, so the
 //!   mirror has a layout identical to `DeviceDetails` yet is a valid value for *any* bit pattern —
 //!   including a fresh, uninitialised allocation.
-//! - `DeviceDetails::new_uninit_for_size(size: usize) -> Result<(Box<UninitDeviceDetails>, usize, <[u16] as Pointee>::Metadata), InvalidDeviceDetails>`
-//!   and `DeviceDetails::new_uninit_for_count(count: <[u16] as Pointee>::Metadata) -> Result<(Box<UninitDeviceDetails>, usize, <[u16] as Pointee>::Metadata), InvalidDeviceDetails>`
+//! - `DeviceDetails::new_uninit_for_size(size: usize) -> Result<(Box<UninitDeviceDetails>, Layout, usize, <[u16] as Pointee>::Metadata), LayoutError>`
+//!   and `DeviceDetails::new_uninit_for_count(count: <[u16] as Pointee>::Metadata) -> Result<(Box<UninitDeviceDetails>, Layout, usize, <[u16] as Pointee>::Metadata), LayoutError>`
 //!   — **safe** allocating constructors, taking the total buffer size or the tail element count
-//!   respectively: they validate the request via [`layout_for_size`][Self::layout_for_size] /
-//!   [`layout_for_count`][Self::layout_for_count], allocate a buffer of the correct layout,
-//!   attach the tail element count as the pointer metadata and return it boxed **together with
-//!   the byte offset of the tail and the tail element count**, so initialisation routines do not
-//!   need to call `layout_for_*` again. Any sized field that declares a default
+//!   respectively: they compute the layout via [`layout_for_size`][Self::layout_for_size] /
+//!   [`layout_for_count`][Self::layout_for_count], allocate a buffer of that layout, attach the
+//!   tail element count as the pointer metadata and return it boxed **together with the computed
+//!   `Layout`, the byte offset of the tail and the tail element count**, so initialisation
+//!   routines do not need to call `layout_for_*` again. Any sized field that declares a default
 //!   (`field: Type = expr`) is initialised with it (via [`MaybeUninit::write`]); everything
-//!   else is left for the caller to write.
+//!   else is left for the caller to write. A `size` that does not match the correctly aligned and
+//!   padded layout is **not** rejected: the returned `Layout` carries the valid size
+//!   (`layout.size()`), so the caller can compare it with the requested `size` and decide how to
+//!   handle a mismatch before calling `assume_init`.
 //! - `UninitDeviceDetails::assume_init(self: Box<Self>) -> Box<DeviceDetails>` — the single `unsafe`
 //!   boundary: once the caller has initialised every field, converts the box into the initialised
 //!   type. The typical pattern is a user-written `new` that calls `new_uninit_for_size` (or
 //!   `new_uninit_for_count`), performs any additional initialisation and then calls `assume_init`.
-//! - `DeviceDetails::layout_for_size(size: usize) -> Result<(Layout, usize, <[u16] as Pointee>::Metadata), InvalidDeviceDetails>`
-//!   and `DeviceDetails::layout_for_count(count: <[u16] as Pointee>::Metadata) -> Result<(Layout, usize, <[u16] as Pointee>::Metadata), InvalidDeviceDetails>`
+//! - `DeviceDetails::layout_for_size(size: usize) -> Result<(Layout, usize, <[u16] as Pointee>::Metadata), LayoutError>`
+//!   and `DeviceDetails::layout_for_count(count: <[u16] as Pointee>::Metadata) -> Result<(Layout, usize, <[u16] as Pointee>::Metadata), LayoutError>`
 //!   — return the [`Layout`], the byte offset of the unsized tail and the tail element count
 //!   (typed as the tail slice's `Pointee::Metadata`, i.e. the fat-pointer metadata — a `usize`
 //!   for `[T]`) for a buffer of `size` bytes or of `count` tail elements (the mirror has the
 //!   identical layout, so this serves both).
-//! - `InvalidDeviceDetails` — a dedicated error enum with variants
-//!   `InvalidLayout(::core::alloc::LayoutError)` and `InvalidSize { requested: usize, valid: usize }`,
-//!   implementing `Debug`, `Clone`, `PartialEq`, `Eq`, `Display`, `From<LayoutError>` and
-//!   `core::error::Error` — including `Error::source`.
 //!
 //! # Requirements
 //!
@@ -84,8 +84,11 @@
 //!
 //! Misuse (not a struct, missing `repr(C)`, sized tail, unsized non-tail field) is reported at
 //! compile time with spanned diagnostics (via `proc_macro2_diagnostic`) and covered by compile-fail
-//! tests in `tests/compilation/`. At runtime, an invalid `size` yields
-//! `InvalidFoo::InvalidSize { requested, valid }` or `InvalidFoo::InvalidLayout(..)`.
+//! tests in `tests/compilation/`. At runtime the only failure mode is an uncomputable layout (e.g.
+//! the tail array overflows `isize::MAX`): every generated function then returns
+//! `Err(::core::alloc::LayoutError)`. A `size` that does not match the correctly aligned and
+//! padded layout for the derived tail count is deliberately **not** an error — the returned
+//! `Layout` carries the valid size, so the caller can detect and handle the mismatch itself.
 
 use proc_macro::TokenStream as TokenStream1;
 use proc_macro2::TokenStream as TokenStream2;
@@ -227,13 +230,12 @@ impl<'ast> DstStruct<'ast> {
         })
     }
 
-    /// Generates the `UninitFoo` mirror struct, the `InvalidFoo` error type and the
-    /// `new_uninit_for_size` / `new_uninit_for_count` / `assume_init` / `layout_for_size` /
-    /// `layout_for_count` methods.
+    /// Generates the `UninitFoo` mirror struct and the `new_uninit_for_size` /
+    /// `new_uninit_for_count` / `assume_init` / `layout_for_size` / `layout_for_count` methods
+    /// (all returning `core::alloc::LayoutError` on failure).
     pub(crate) fn generate(&self) -> TokenStream2 {
         let name = self.name;
         let uninit = format_ident!("Uninit{}", name);
-        let err = format_ident!("Invalid{}", name);
         let generics = self.generics;
         let (impl_generics, ty_generics, where_clause) = self.generics.split_for_impl();
 
@@ -269,46 +271,6 @@ impl<'ast> DstStruct<'ast> {
         let count_ty = quote! { <[#elem] as ::core::ptr::Pointee>::Metadata };
 
         quote! {
-            #[derive(Debug, Clone, PartialEq, Eq)]
-            enum #err {
-                #[doc = "The requested size cannot be laid out for this type (e.g. overflow computing the tail layout)."]
-                InvalidLayout(::core::alloc::LayoutError),
-                #[doc = "`requested` is not a valid total size for this type; `valid` is the correctly aligned and padded size for the requested tail length."]
-                InvalidSize { requested: usize, valid: usize },
-            }
-
-            impl ::core::fmt::Display for #err {
-                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                    match self {
-                        Self::InvalidLayout(_) => ::core::write!(
-                            f,
-                            "invalid layout requested for a {} buffer",
-                            ::core::stringify!(#name)
-                        ),
-                        Self::InvalidSize { requested, valid } => ::core::write!(
-                            f,
-                            "{requested} is not valid as a size for {}; when correctly aligned and padded the next valid size is {valid}",
-                            ::core::stringify!(#name)
-                        ),
-                    }
-                }
-            }
-
-            impl ::core::error::Error for #err {
-                fn source(&self) -> ::core::option::Option<&(dyn ::core::error::Error + 'static)> {
-                    match self {
-                        Self::InvalidLayout(error) => ::core::option::Option::Some(error),
-                        Self::InvalidSize { .. } => ::core::option::Option::None,
-                    }
-                }
-            }
-
-            impl ::core::convert::From<::core::alloc::LayoutError> for #err {
-                fn from(error: ::core::alloc::LayoutError) -> Self {
-                    Self::InvalidLayout(error)
-                }
-            }
-
             #[doc = concat!(
                 "`MaybeUninit` mirror of [`", stringify!(#name), "`]: identical `repr(C)` layout, but every "
             )]
@@ -325,45 +287,62 @@ impl<'ast> DstStruct<'ast> {
             }
 
             impl #impl_generics #name #ty_generics #where_clause {
-                #[doc = "Allocate a buffer of `size` bytes and return it boxed as the `Uninit` mirror of `Self`."]
+                #[doc = "Allocate a buffer for a `Self` value of `size` bytes and return it boxed as the"]
+                #[doc = "`Uninit` mirror of `Self`, together with the computed [`Layout`], the byte offset of"]
+                #[doc = "the unsized tail and the tail element count."]
                 #[doc = ""]
-                #[doc = "The requested `size` is validated by [`layout_for_size`][Self::layout_for_size]; the"]
-                #[doc = "allocation then proceeds exactly as for [`new_uninit_for_count`][Self::new_uninit_for_count]."]
+                #[doc = "The tail element count is derived from `size` by [`layout_for_size`][Self::layout_for_size];"]
+                #[doc = "the allocation then proceeds exactly as for [`new_uninit_for_count`][Self::new_uninit_for_count]."]
                 #[doc = ""]
                 #[doc = "The allocation is **uninitialised**, except for any sized field that declares a default"]
                 #[doc = "(`field: Type = expr`), which is written here. Initialise the remaining fields with"]
                 #[doc = "[`MaybeUninit::write`], then convert with `assume_init` on the returned box."]
                 #[doc = ""]
                 #[doc = "# Errors"]
-                #[doc = "Returns `Err` if `size` is not a valid, correctly aligned and padded total size"]
-                #[doc = "for this type — see [`layout_for_size`][Self::layout_for_size]."]
+                #[doc = "Returns `Err(LayoutError)` if the layout cannot be computed (e.g. the tail array"]
+                #[doc = "overflows) — see [`layout_for_size`][Self::layout_for_size]."]
                 #[doc = ""]
                 #[doc = "# Returns"]
-                #[doc = "The boxed mirror, the byte offset of the unsized tail and the tail element count"]
-                #[doc = "(the latter typed as the tail slice's `Pointee::Metadata`), so initialisation"]
-                #[doc = "routines do not need to call [`layout_for_size`][Self::layout_for_size] again."]
+                #[doc = "The boxed mirror, the computed [`Layout`], the byte offset of the unsized tail and the"]
+                #[doc = "tail element count (the latter typed as the tail slice's `Pointee::Metadata`), so"]
+                #[doc = "initialisation routines do not need to call [`layout_for_size`][Self::layout_for_size] again."]
+                #[doc = ""]
+                #[doc = "Note: a `size` that does not match the correctly aligned and padded layout for the derived"]
+                #[doc = "tail count is **not** rejected — the returned `Layout` carries the valid size"]
+                #[doc = "(`layout.size()`), so the caller can compare it with the requested `size` and decide how to"]
+                #[doc = "handle a mismatch before calling `assume_init`."]
                 fn new_uninit_for_size(
                     size: usize,
-                ) -> ::core::result::Result<(::std::boxed::Box<#uninit #ty_generics>, usize, #count_ty), #err> {
+                ) -> ::core::result::Result<
+                    (
+                        ::std::boxed::Box<#uninit #ty_generics>,
+                        ::core::alloc::Layout,
+                        usize,
+                        #count_ty,
+                    ),
+                    ::core::alloc::LayoutError,
+                > {
                     let (_layout, _offset, count) = Self::layout_for_size(size)?;
                     Self::new_uninit_for_count(count)
                 }
 
                 #[doc = "Allocate a buffer holding `count` tail elements and return it boxed as the `Uninit`"]
-                #[doc = "mirror of `Self`. `count` is typed as the tail slice's `Pointee::Metadata` (a `usize`"]
-                #[doc = "for `[T]`), matching the fat-pointer metadata."]
+                #[doc = "mirror of `Self`, together with the computed [`Layout`], the byte offset of the unsized"]
+                #[doc = "tail and the tail element count. `count` is typed as the tail slice's"]
+                #[doc = "`Pointee::Metadata` (a `usize` for `[T]`), matching the fat-pointer metadata."]
                 #[doc = ""]
                 #[doc = "The allocation is **uninitialised**, except for any sized field that declares a default"]
                 #[doc = "(`field: Type = expr`), which is written here. Initialise the remaining fields with"]
                 #[doc = "[`MaybeUninit::write`], then convert with `assume_init` on the returned box."]
                 #[doc = ""]
                 #[doc = "# Errors"]
-                #[doc = "Returns `Err` if the layout for `count` tail elements cannot be computed"]
+                #[doc = "Returns `Err(LayoutError)` if the layout for `count` tail elements cannot be computed"]
                 #[doc = "(e.g. overflow) — see [`layout_for_count`][Self::layout_for_count]."]
                 #[doc = ""]
                 #[doc = "# Returns"]
-                #[doc = "The boxed mirror, the byte offset of the unsized tail and the tail element count,"]
-                #[doc = "so initialisation routines do not need to call [`layout_for_count`][Self::layout_for_count] again."]
+                #[doc = "The boxed mirror, the computed [`Layout`], the byte offset of the unsized tail and the"]
+                #[doc = "tail element count, so initialisation routines do not need to call"]
+                #[doc = "[`layout_for_count`][Self::layout_for_count] again."]
                 #[doc = ""]
                 #[doc = concat!(
                     "# Implementation safety\n\n",
@@ -379,7 +358,15 @@ impl<'ast> DstStruct<'ast> {
                 )]
                 fn new_uninit_for_count(
                     count: #count_ty,
-                ) -> ::core::result::Result<(::std::boxed::Box<#uninit #ty_generics>, usize, #count_ty), #err> {
+                ) -> ::core::result::Result<
+                    (
+                        ::std::boxed::Box<#uninit #ty_generics>,
+                        ::core::alloc::Layout,
+                        usize,
+                        #count_ty,
+                    ),
+                    ::core::alloc::LayoutError,
+                > {
                     let (layout, offset, count) = Self::layout_for_count(count)?;
 
                     let raw = match <::std::alloc::Global as ::core::alloc::Allocator>::allocate(
@@ -412,7 +399,7 @@ impl<'ast> DstStruct<'ast> {
                     // declared defaults (`field: Type = expr`) are written safely via MaybeUninit::write
                     #(boxed.#d_idents.write(#d_exprs);)*
 
-                    ::core::result::Result::Ok((boxed, offset, count))
+                    ::core::result::Result::Ok((boxed, layout, offset, count))
                 }
 
                 #[doc = "Calculate the `(layout, offset of the unsized tail, tail element count)`"]
@@ -420,17 +407,24 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "`Pointee::Metadata` (a `usize` for `[T]`), matching the fat-pointer metadata."]
                 #[doc = "The `Uninit` mirror has the identical layout."]
                 #[doc = ""]
+                #[doc = "The tail count is derived from `size` (the bytes beyond the sized head, rounded down"]
+                #[doc = "to whole elements; a `size` smaller than the head maps to an empty tail). A `size`"]
+                #[doc = "that does not equal the resulting `layout.size()` is **not** an error: compare the"]
+                #[doc = "returned [`Layout`] with the requested `size` yourself to validate it."]
+                #[doc = ""]
                 #[doc = "# Errors"]
-                #[doc = "Returns `Err(InvalidLayout(..))` if the layout cannot be computed and"]
-                #[doc = "`Err(InvalidSize { requested, valid })` if `size` is smaller than the sized head or"]
-                #[doc = "does not match the correctly aligned and padded layout."]
+                #[doc = "Returns `Err(LayoutError)` if the layout cannot be computed (e.g. the tail array"]
+                #[doc = "overflows)."]
                 #[doc = ""]
                 #[doc = "# SAFETY"]
                 #[doc = "The correctness of this layout and the tail offset is relied upon by unsafe code"]
                 #[doc = "in [`new_uninit_for_size`][Self::new_uninit_for_size]."]
                 fn layout_for_size(
                     size: usize,
-                ) -> ::core::result::Result<(::core::alloc::Layout, usize, #count_ty), #err> {
+                ) -> ::core::result::Result<
+                    (::core::alloc::Layout, usize, #count_ty),
+                    ::core::alloc::LayoutError,
+                > {
                     // sequential `extend` reproduces the repr(C) placement of the sized head
                     let mut prefix = ::core::alloc::Layout::new::<()>();
                     #(
@@ -438,23 +432,12 @@ impl<'ast> DstStruct<'ast> {
                     )*
 
                     let elem_size = ::core::mem::size_of::<#elem>();
-                    let Some(tail_bytes) = size.checked_sub(prefix.size()) else {
-                        return ::core::result::Result::Err(#err::InvalidSize {
-                            requested: size,
-                            valid: prefix.pad_to_align().size(),
-                        });
-                    };
+                    // a size smaller than the head maps to an empty tail; the caller validates the
+                    // result by comparing `layout.size()` with the requested `size`
+                    let tail_bytes = size.saturating_sub(prefix.size());
                     let count: #count_ty = if elem_size == 0 { 0 } else { tail_bytes / elem_size };
 
-                    let (layout, offset, count) = Self::layout_for_count(count)?;
-                    if layout.size() != size {
-                        return ::core::result::Result::Err(#err::InvalidSize {
-                            requested: size,
-                            valid: layout.size(),
-                        });
-                    }
-
-                    ::core::result::Result::Ok((layout, offset, count))
+                    Self::layout_for_count(count)
                 }
 
                 #[doc = "Calculate the `(layout, offset of the unsized tail, tail element count)`"]
@@ -463,15 +446,18 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "The `Uninit` mirror has the identical layout."]
                 #[doc = ""]
                 #[doc = "# Errors"]
-                #[doc = "Returns `Err(InvalidLayout(..))` if the layout cannot be computed (e.g. the tail"]
-                #[doc = "array overflows)."]
+                #[doc = "Returns `Err(LayoutError)` if the layout cannot be computed (e.g. the tail array"]
+                #[doc = "overflows)."]
                 #[doc = ""]
                 #[doc = "# SAFETY"]
                 #[doc = "The correctness of this layout and the tail offset is relied upon by unsafe code"]
                 #[doc = "in [`new_uninit_for_count`][Self::new_uninit_for_count]."]
                 fn layout_for_count(
                     count: #count_ty,
-                ) -> ::core::result::Result<(::core::alloc::Layout, usize, #count_ty), #err> {
+                ) -> ::core::result::Result<
+                    (::core::alloc::Layout, usize, #count_ty),
+                    ::core::alloc::LayoutError,
+                > {
                     // sequential `extend` reproduces the repr(C) placement of the sized head
                     let mut prefix = ::core::alloc::Layout::new::<()>();
                     #(

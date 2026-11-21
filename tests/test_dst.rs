@@ -6,7 +6,7 @@
 // field names mimic the C++ structs these DSTs mirror
 #![allow(non_snake_case)]
 
-use std::alloc::Layout;
+use std::alloc::{Layout, LayoutError};
 use std::error::Error;
 use std::mem::{offset_of, size_of, size_of_val};
 
@@ -56,9 +56,9 @@ struct Generic<T> {
 
 /// `new_uninit_for_size` + write the tail + `assume_init`.
 fn init_details(size: usize) -> Box<DeviceDetails> {
-    let (mut uninit, _offset, _count) = DeviceDetails::new_uninit_for_size(size).unwrap();
-    // the declared default was already written by `new_uninit`
-    // SAFETY: `new_uninit` wrote the default into `cbSize`
+    let (mut uninit, _layout, _offset, _count) = DeviceDetails::new_uninit_for_size(size).unwrap();
+    // the declared default was already written by `new_uninit_for_size`
+    // SAFETY: `new_uninit_for_size` wrote the default into `cbSize`
     assert_eq!(unsafe { uninit.cbSize.assume_init_read() }, 4);
     for (i, word) in uninit.DevicePath.iter_mut().enumerate() {
         word.write(0xA000 + i as u16);
@@ -75,9 +75,10 @@ fn new_uninit_allocates_a_layout_identical_buffer() {
     };
 
     // the Uninit-mirror has the same layout as the C shadow
-    let (uninit, _offset, _count) =
+    let (uninit, layout, _offset, _count) =
         DeviceDetails::new_uninit_for_size(size_of_val(&shadow)).unwrap();
     assert_eq!(Layout::for_value(&shadow), Layout::for_value(&*uninit));
+    assert_eq!(layout, Layout::for_value(&shadow));
     assert_eq!(
         offset_of!(DeviceDetailsShadow, cbSize),
         offset_of!(UninitDeviceDetails, cbSize)
@@ -91,7 +92,7 @@ fn new_uninit_allocates_a_layout_identical_buffer() {
         offset_of!(DeviceDetails, cbSize)
     );
     // the tail of a DST cannot be named in offset_of! without `offset_of_slice`;
-    // layout_for reports its offset instead (checked in layout_for_reports_layout_offset_and_count)
+    // layout_for_size reports its offset instead (checked in layout_for_reports_layout_offset_and_count)
     assert_eq!(custom.cbSize, 4);
     assert_eq!(custom.DevicePath.len(), 2);
     assert_eq!(&custom.DevicePath[..], &[0xA000, 0xA001]);
@@ -113,54 +114,41 @@ fn new_uninit_allows_an_empty_tail() {
 }
 
 #[test]
-fn new_uninit_rejects_a_misaligned_size() {
-    let err = DeviceDetails::new_uninit_for_size(6).err().unwrap();
-    assert_eq!(
-        err,
-        InvalidDeviceDetails::InvalidSize {
-            requested: 6,
-            valid: 8
-        }
-    );
-    assert!(err.source().is_none());
-    assert_eq!(
-        err.to_string(),
-        "6 is not valid as a size for DeviceDetails; when correctly aligned and padded the next valid size is 8"
-    );
+fn new_uninit_for_size_does_not_reject_a_misaligned_size_but_returns_the_layout() {
+    // 6 bytes maps to a 1-word tail; the correctly aligned & padded layout is 8 bytes.
+    // That mismatch is not an error: the returned `Layout` carries the valid size, so the
+    // caller can detect it (6 != layout.size()) and decide how to handle it.
+    let (uninit, layout, offset, count) = DeviceDetails::new_uninit_for_size(6).unwrap();
+    assert_eq!(layout.size(), 8);
+    assert_ne!(layout.size(), 6);
+    assert_eq!((offset, count), (4, 1));
+    assert_eq!(uninit.DevicePath.len(), 1);
 }
 
 #[test]
-fn new_uninit_rejects_a_size_smaller_than_the_head() {
-    let err = DeviceDetails::new_uninit_for_size(2).err().unwrap();
-    assert_eq!(
-        err,
-        InvalidDeviceDetails::InvalidSize {
-            requested: 2,
-            valid: 4
-        }
-    );
+fn new_uninit_for_size_maps_a_size_smaller_than_the_head_to_an_empty_tail() {
+    let (uninit, layout, offset, count) = DeviceDetails::new_uninit_for_size(2).unwrap();
+    assert_eq!((layout.size(), offset, count), (4, 4, 0));
+    assert!(uninit.DevicePath.is_empty());
 }
 
 #[test]
-fn layout_errors_are_sourced() {
+fn layout_errors_are_plain_layout_errors() {
+    // usize::MAX overflows the tail array layout -> Err(LayoutError)
     let err = DeviceDetails::new_uninit_for_size(usize::MAX)
         .err()
         .unwrap();
-    assert!(matches!(err, InvalidDeviceDetails::InvalidLayout(_)));
+    assert_eq!(err, Layout::array::<u16>(usize::MAX).unwrap_err());
 
-    // Error::source
-    assert!(err.source().is_some());
+    // LayoutError is a std unit error: no source, fixed Display
+    assert!(err.source().is_none());
     assert_eq!(
         err.to_string(),
-        "invalid layout requested for a DeviceDetails buffer"
+        "invalid parameters to Layout::from_size_align"
     );
-}
 
-#[test]
-fn from_layout_error() {
-    let layout_error = Layout::array::<u8>(usize::MAX).unwrap_err();
-    let err = InvalidDeviceDetails::from(layout_error);
-    assert!(matches!(err, InvalidDeviceDetails::InvalidLayout(_)));
+    let err = DeviceDetails::layout_for_count(usize::MAX).err().unwrap();
+    assert_eq!(err, Layout::array::<u8>(usize::MAX).unwrap_err());
 }
 
 #[test]
@@ -172,10 +160,10 @@ fn multi_head_layout_matches_repr_c() {
     assert_eq!(offset, 8);
     assert_eq!(count, 4);
     assert_eq!(offset_of!(MultiHead, b), 4);
-    assert_eq!(offset, 8); // tail offset, reported by layout_for
+    assert_eq!(offset, 8); // tail offset, reported by layout_for_size
 
-    let (mut uninit, _offset, _count) = MultiHead::new_uninit_for_size(12).unwrap();
-    // SAFETY: `new_uninit` wrote the declared defaults
+    let (mut uninit, _layout, _offset, _count) = MultiHead::new_uninit_for_size(12).unwrap();
+    // SAFETY: `new_uninit_for_size` wrote the declared defaults
     assert_eq!(unsafe { uninit.a.assume_init_read() }, 1);
     assert_eq!(unsafe { uninit.b.assume_init_read() }, 2);
     for byte in uninit.tail.iter_mut() {
@@ -195,8 +183,8 @@ fn generic_tail() {
         (12, 2, 2, 5)
     );
 
-    let (mut uninit, _offset, _count) = Generic::<u16>::new_uninit_for_size(12).unwrap();
-    // SAFETY: `new_uninit` wrote the declared default
+    let (mut uninit, _layout, _offset, _count) = Generic::<u16>::new_uninit_for_size(12).unwrap();
+    // SAFETY: `new_uninit_for_size` wrote the declared default
     assert_eq!(unsafe { uninit.tag.assume_init_read() }, 7);
     for item in uninit.items.iter_mut() {
         item.write(0);
@@ -206,14 +194,9 @@ fn generic_tail() {
     assert_eq!(generic.tag, 7);
     assert_eq!(generic.items.len(), 5);
 
-    let err = Generic::<u16>::new_uninit_for_size(11).err().unwrap();
-    assert_eq!(
-        err,
-        InvalidGeneric::InvalidSize {
-            requested: 11,
-            valid: 12
-        }
-    );
+    // 11 does not match the padded layout (12); not an error, the Layout says so
+    let (_uninit, layout, _offset, _count) = Generic::<u16>::new_uninit_for_size(11).unwrap();
+    assert_eq!(layout.size(), 12);
 }
 
 #[test]
@@ -222,7 +205,7 @@ fn defaults_are_optional() {
     let (layout, offset, count) = NoDefaults::layout_for_size(8).unwrap();
     assert_eq!((layout.size(), layout.align(), offset, count), (8, 4, 4, 4));
 
-    let (mut uninit, _offset, _count) = NoDefaults::new_uninit_for_size(8).unwrap();
+    let (mut uninit, _layout, _offset, _count) = NoDefaults::new_uninit_for_size(8).unwrap();
     uninit.a.write(42);
     for byte in uninit.tail.iter_mut() {
         byte.write(1);
@@ -235,7 +218,7 @@ fn defaults_are_optional() {
 
 #[test]
 fn dropping_a_partially_initialised_mirror_is_safe() {
-    let (mut uninit, _offset, _count) = DeviceDetails::new_uninit_for_size(8).unwrap();
+    let (mut uninit, _layout, _offset, _count) = DeviceDetails::new_uninit_for_size(8).unwrap();
     uninit.DevicePath[0].write(1); // leave the rest uninitialised
     // MaybeUninit fields have no drop glue, so dropping here runs no destructors on
     // uninitialised bytes (no UB) and still frees the allocation
@@ -266,8 +249,8 @@ fn layout_for_count_reports_layout_offset_and_count() {
 
 #[test]
 fn new_uninit_for_count_allocates_for_that_count() {
-    let (mut uninit, offset, count) = DeviceDetails::new_uninit_for_count(2).unwrap();
-    assert_eq!((offset, count), (4, 2));
+    let (mut uninit, layout, offset, count) = DeviceDetails::new_uninit_for_count(2).unwrap();
+    assert_eq!((layout.size(), offset, count), (8, 4, 2));
     // SAFETY: `new_uninit_for_count` wrote the declared default
     assert_eq!(unsafe { uninit.cbSize.assume_init_read() }, 4);
     assert_eq!(uninit.DevicePath.len(), 2);
@@ -279,32 +262,33 @@ fn new_uninit_for_count_allocates_for_that_count() {
     assert_eq!(details.cbSize, 4);
     assert_eq!(&details.DevicePath[..], &[0xB000, 0xB001]);
     // the allocation matches layout_for_count(2)
-    assert_eq!(
-        Layout::for_value(&*details),
-        DeviceDetails::layout_for_count(2).unwrap().0
-    );
+    assert_eq!(Layout::for_value(&*details), layout);
+    assert_eq!(layout, DeviceDetails::layout_for_count(2).unwrap().0);
 }
 
 #[test]
 fn new_uninit_for_count_rejects_an_overflowing_count() {
-    let err = DeviceDetails::new_uninit_for_count(usize::MAX)
+    let err: LayoutError = DeviceDetails::new_uninit_for_count(usize::MAX)
         .err()
         .unwrap();
-    assert!(matches!(err, InvalidDeviceDetails::InvalidLayout(_)));
+    assert_eq!(err, Layout::array::<u16>(usize::MAX).unwrap_err());
 }
 
 #[test]
-fn new_uninit_returns_offset_and_count_alongside_the_box() {
+fn new_uninit_returns_layout_offset_and_count_alongside_the_box() {
     // issue #8: the tuple carries everything an initialisation routine needs,
     // so it does not have to call `layout_for_*` again
-    let (uninit, offset, count) = DeviceDetails::new_uninit_for_size(8).unwrap();
-    let (layout, layout_offset, layout_count) = DeviceDetails::layout_for_size(8).unwrap();
-    assert_eq!((offset, count), (layout_offset, layout_count));
+    let (uninit, layout, offset, count) = DeviceDetails::new_uninit_for_size(8).unwrap();
+    let (expected_layout, layout_offset, layout_count) = DeviceDetails::layout_for_size(8).unwrap();
+    assert_eq!(
+        (layout, offset, count),
+        (expected_layout, layout_offset, layout_count)
+    );
     assert_eq!((offset, count), (4, 2));
     assert_eq!(Layout::for_value(&*uninit), layout);
     assert_eq!(uninit.DevicePath.len(), 2);
 
-    let (uninit, offset, count) = MultiHead::new_uninit_for_count(4).unwrap();
+    let (uninit, _layout, offset, count) = MultiHead::new_uninit_for_count(4).unwrap();
     assert_eq!((offset, count), (8, 4));
     assert_eq!(uninit.tail.len(), 4);
 }
