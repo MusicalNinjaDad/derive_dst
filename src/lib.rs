@@ -28,7 +28,7 @@
 //! - `InvalidDeviceDetails` — a dedicated error enum with variants
 //!   `InvalidLayout(::core::alloc::LayoutError)` and `InvalidSize { requested: usize, valid: usize }`,
 //!   implementing `Debug`, `Clone`, `PartialEq`, `Eq`, `Display`, `From<LayoutError>` and
-//!   `std::error::Error` — including `Error::source`.
+//!   `core::error::Error` — including `Error::source`.
 //! - `DeviceDetails::new(size: usize) -> Result<Box<Self>, InvalidDeviceDetails>` — validates the
 //!   requested size via [`layout_for`][Self::layout_for], allocates a zeroed buffer of the correct
 //!   layout, initialises every sized field with its declared default (`field: Type = expr`) and
@@ -251,8 +251,8 @@ impl<'ast> DstStruct<'ast> {
                 }
             }
 
-            impl ::std::error::Error for #err {
-                fn source(&self) -> ::core::option::Option<&(dyn ::std::error::Error + 'static)> {
+            impl ::core::error::Error for #err {
+                fn source(&self) -> ::core::option::Option<&(dyn ::core::error::Error + 'static)> {
                     match self {
                         Self::InvalidLayout(error) => ::core::option::Option::Some(error),
                         Self::InvalidSize { .. } => ::core::option::Option::None,
@@ -291,7 +291,7 @@ impl<'ast> DstStruct<'ast> {
                 pub fn new(size: usize) -> ::core::result::Result<::std::boxed::Box<Self>, #err> {
                     let (layout, _offset, count) = Self::layout_for(size)?;
 
-                    let raw = match <::std::alloc::Global as ::std::alloc::Allocator>::allocate_zeroed(
+                    let raw = match <::std::alloc::Global as ::core::alloc::Allocator>::allocate_zeroed(
                         &::std::alloc::Global,
                         layout,
                     ) {
