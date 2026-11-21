@@ -31,7 +31,9 @@
 //! assert_eq!(details.DevicePath.len(), 2);
 //! ```
 //!
-//! the derive generates (with the same visibility as the struct):
+//! the derive generates **private items in the same module** (the caller owns the public API —
+//! e.g. a hand-written `pub fn new` that wraps these helpers — and no implementation details leak
+//! into it):
 //!
 //! - `UninitDeviceDetails` — a `#[repr(C)]` **mirror struct** in which every field is wrapped in
 //!   [`MaybeUninit`] (`cbSize: MaybeUninit<u32>`, `DevicePath: [MaybeUninit<u16>]`). `MaybeUninit<T>`
@@ -90,7 +92,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
 use quote::{format_ident, quote};
 use syn::{
-    Data, DeriveInput, Expr, Field, Fields, Generics, Ident, Meta, Token, Type, Visibility,
+    Data, DeriveInput, Expr, Field, Fields, Generics, Ident, Meta, Token, Type,
     punctuated::Punctuated, spanned::Spanned,
 };
 
@@ -115,7 +117,6 @@ fn impl_dst(input: TokenStream2) -> DiagnosticStream {
 
 /// A destructured, validated `#[repr(C)]` struct with named fields and an unsized slice tail.
 pub(crate) struct DstStruct<'ast> {
-    vis: &'ast Visibility,
     name: &'ast Ident,
     generics: &'ast Generics,
     /// The sized "head" fields (all but the last); a declared `= expr` default is written by
@@ -218,7 +219,6 @@ impl<'ast> DstStruct<'ast> {
         }
 
         Ok(Self {
-            vis: &ast.vis,
             name,
             generics: &ast.generics,
             head,
@@ -231,7 +231,6 @@ impl<'ast> DstStruct<'ast> {
     /// `new_uninit_for_size` / `new_uninit_for_count` / `assume_init` / `layout_for_size` /
     /// `layout_for_count` methods.
     pub(crate) fn generate(&self) -> TokenStream2 {
-        let vis = self.vis;
         let name = self.name;
         let uninit = format_ident!("Uninit{}", name);
         let err = format_ident!("Invalid{}", name);
@@ -271,7 +270,7 @@ impl<'ast> DstStruct<'ast> {
 
         quote! {
             #[derive(Debug, Clone, PartialEq, Eq)]
-            #vis enum #err {
+            enum #err {
                 #[doc = "The requested size cannot be laid out for this type (e.g. overflow computing the tail layout)."]
                 InvalidLayout(::core::alloc::LayoutError),
                 #[doc = "`requested` is not a valid total size for this type; `valid` is the correctly aligned and padded size for the requested tail length."]
@@ -320,7 +319,7 @@ impl<'ast> DstStruct<'ast> {
             )]
             #[derive(Debug)]
             #[repr(C)]
-            #vis struct #uninit #generics #where_clause {
+            struct #uninit #generics #where_clause {
                 #(#head_vis #head_idents: ::core::mem::MaybeUninit<#head_tys>,)*
                 #tail_vis #tail_ident: [::core::mem::MaybeUninit<#elem>],
             }
@@ -343,7 +342,7 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "The boxed mirror, the byte offset of the unsized tail and the tail element count"]
                 #[doc = "(the latter typed as the tail slice's `Pointee::Metadata`), so initialisation"]
                 #[doc = "routines do not need to call [`layout_for_size`][Self::layout_for_size] again."]
-                pub fn new_uninit_for_size(
+                fn new_uninit_for_size(
                     size: usize,
                 ) -> ::core::result::Result<(::std::boxed::Box<#uninit #ty_generics>, usize, #count_ty), #err> {
                     let (_layout, _offset, count) = Self::layout_for_size(size)?;
@@ -378,7 +377,7 @@ impl<'ast> DstStruct<'ast> {
                     "pattern, so the uninitialised allocation is a valid pointee; the pointer is moved ",
                     "into exactly one `Box` and not used afterwards."
                 )]
-                pub fn new_uninit_for_count(
+                fn new_uninit_for_count(
                     count: #count_ty,
                 ) -> ::core::result::Result<(::std::boxed::Box<#uninit #ty_generics>, usize, #count_ty), #err> {
                     let (layout, offset, count) = Self::layout_for_count(count)?;
@@ -429,7 +428,7 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "# SAFETY"]
                 #[doc = "The correctness of this layout and the tail offset is relied upon by unsafe code"]
                 #[doc = "in [`new_uninit_for_size`][Self::new_uninit_for_size]."]
-                pub fn layout_for_size(
+                fn layout_for_size(
                     size: usize,
                 ) -> ::core::result::Result<(::core::alloc::Layout, usize, #count_ty), #err> {
                     // sequential `extend` reproduces the repr(C) placement of the sized head
@@ -470,7 +469,7 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "# SAFETY"]
                 #[doc = "The correctness of this layout and the tail offset is relied upon by unsafe code"]
                 #[doc = "in [`new_uninit_for_count`][Self::new_uninit_for_count]."]
-                pub fn layout_for_count(
+                fn layout_for_count(
                     count: #count_ty,
                 ) -> ::core::result::Result<(::core::alloc::Layout, usize, #count_ty), #err> {
                     // sequential `extend` reproduces the repr(C) placement of the sized head
@@ -494,7 +493,7 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "Every field of `self` must have been initialised: each sized field (a `MaybeUninit`)"]
                 #[doc = "via [`MaybeUninit::write`], and every element of the unsized tail likewise."]
                 #[doc = "Reading a field that was never written is undefined behaviour."]
-                pub unsafe fn assume_init(
+                unsafe fn assume_init(
                     self: ::std::boxed::Box<Self>,
                 ) -> ::std::boxed::Box<#name #ty_generics> {
                     let raw = ::std::boxed::Box::into_raw(self);
