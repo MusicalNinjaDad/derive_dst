@@ -18,7 +18,9 @@
 //!     DevicePath: [u16],
 //! }
 //!
-//! let mut uninit = DeviceDetails::new_uninit_for_size(8).unwrap();
+//! let (mut uninit, tail_offset, count) = DeviceDetails::new_uninit_for_size(8).unwrap();
+//! assert_eq!(tail_offset, 4);
+//! assert_eq!(count, 2);
 //! // `cbSize` already holds its declared default; initialise the tail:
 //! for word in uninit.DevicePath.iter_mut() {
 //!     word.write(0);
@@ -36,14 +38,16 @@
 //!   is guaranteed to have the same size, alignment and ABI as `T` but no validity invariant, so the
 //!   mirror has a layout identical to `DeviceDetails` yet is a valid value for *any* bit pattern —
 //!   including a fresh, uninitialised allocation.
-//! - `DeviceDetails::new_uninit_for_size(size: usize) -> Result<Box<UninitDeviceDetails>, InvalidDeviceDetails>`
-//!   and `DeviceDetails::new_uninit_for_count(count: <[u16] as Pointee>::Metadata) -> Result<Box<UninitDeviceDetails>, InvalidDeviceDetails>`
+//! - `DeviceDetails::new_uninit_for_size(size: usize) -> Result<(Box<UninitDeviceDetails>, usize, <[u16] as Pointee>::Metadata), InvalidDeviceDetails>`
+//!   and `DeviceDetails::new_uninit_for_count(count: <[u16] as Pointee>::Metadata) -> Result<(Box<UninitDeviceDetails>, usize, <[u16] as Pointee>::Metadata), InvalidDeviceDetails>`
 //!   — **safe** allocating constructors, taking the total buffer size or the tail element count
 //!   respectively: they validate the request via [`layout_for_size`][Self::layout_for_size] /
 //!   [`layout_for_count`][Self::layout_for_count], allocate a buffer of the correct layout,
-//!   attach the tail element count as the pointer metadata and return it boxed. Any sized field
-//!   that declares a default (`field: Type = expr`) is initialised with it (via
-//!   [`MaybeUninit::write`]); everything else is left for the caller to write.
+//!   attach the tail element count as the pointer metadata and return it boxed **together with
+//!   the byte offset of the tail and the tail element count**, so initialisation routines do not
+//!   need to call `layout_for_*` again. Any sized field that declares a default
+//!   (`field: Type = expr`) is initialised with it (via [`MaybeUninit::write`]); everything
+//!   else is left for the caller to write.
 //! - `UninitDeviceDetails::assume_init(self: Box<Self>) -> Box<DeviceDetails>` — the single `unsafe`
 //!   boundary: once the caller has initialised every field, converts the box into the initialised
 //!   type. The typical pattern is a user-written `new` that calls `new_uninit_for_size` (or
@@ -334,9 +338,14 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "# Errors"]
                 #[doc = "Returns `Err` if `size` is not a valid, correctly aligned and padded total size"]
                 #[doc = "for this type — see [`layout_for_size`][Self::layout_for_size]."]
+                #[doc = ""]
+                #[doc = "# Returns"]
+                #[doc = "The boxed mirror, the byte offset of the unsized tail and the tail element count"]
+                #[doc = "(the latter typed as the tail slice's `Pointee::Metadata`), so initialisation"]
+                #[doc = "routines do not need to call [`layout_for_size`][Self::layout_for_size] again."]
                 pub fn new_uninit_for_size(
                     size: usize,
-                ) -> ::core::result::Result<::std::boxed::Box<#uninit #ty_generics>, #err> {
+                ) -> ::core::result::Result<(::std::boxed::Box<#uninit #ty_generics>, usize, #count_ty), #err> {
                     let (_layout, _offset, count) = Self::layout_for_size(size)?;
                     Self::new_uninit_for_count(count)
                 }
@@ -353,6 +362,10 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "Returns `Err` if the layout for `count` tail elements cannot be computed"]
                 #[doc = "(e.g. overflow) — see [`layout_for_count`][Self::layout_for_count]."]
                 #[doc = ""]
+                #[doc = "# Returns"]
+                #[doc = "The boxed mirror, the byte offset of the unsized tail and the tail element count,"]
+                #[doc = "so initialisation routines do not need to call [`layout_for_count`][Self::layout_for_count] again."]
+                #[doc = ""]
                 #[doc = concat!(
                     "# Implementation safety\n\n",
                     "The internal `unsafe` block is sound: `raw` was allocated by `Global` with the ",
@@ -367,8 +380,8 @@ impl<'ast> DstStruct<'ast> {
                 )]
                 pub fn new_uninit_for_count(
                     count: #count_ty,
-                ) -> ::core::result::Result<::std::boxed::Box<#uninit #ty_generics>, #err> {
-                    let (layout, _offset, count) = Self::layout_for_count(count)?;
+                ) -> ::core::result::Result<(::std::boxed::Box<#uninit #ty_generics>, usize, #count_ty), #err> {
+                    let (layout, offset, count) = Self::layout_for_count(count)?;
 
                     let raw = match <::std::alloc::Global as ::core::alloc::Allocator>::allocate(
                         &::std::alloc::Global,
@@ -400,7 +413,7 @@ impl<'ast> DstStruct<'ast> {
                     // declared defaults (`field: Type = expr`) are written safely via MaybeUninit::write
                     #(boxed.#d_idents.write(#d_exprs);)*
 
-                    ::core::result::Result::Ok(boxed)
+                    ::core::result::Result::Ok((boxed, offset, count))
                 }
 
                 #[doc = "Calculate the `(layout, offset of the unsized tail, tail element count)`"]
