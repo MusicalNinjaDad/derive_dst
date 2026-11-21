@@ -9,11 +9,6 @@ fn main() -> Result<()> {
     ac.emit_unstable_feature(proc_macro_diagnostic, &allowed_features);
     // needed by crates *using* `#[derive(DST)]` for the field-default syntax
     ac.emit_unstable_feature(default_field_values, &allowed_features);
-    // needed by crates *using* `#[derive(DST)]` for the generated `Error::provide`
-    ac.emit_unstable_feature(
-        OtherFeature("error_generic_member_access".to_string()),
-        &allowed_features,
-    );
     // needed by crates *using* `#[derive(DST)]` for the generated `ptr::from_raw_parts_mut` call
     ac.emit_unstable_feature(OtherFeature("ptr_metadata".to_string()), &allowed_features);
 

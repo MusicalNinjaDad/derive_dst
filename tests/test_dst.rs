@@ -1,22 +1,13 @@
 #![cfg_attr(unstable_default_field_values, feature(default_field_values))]
-#![cfg_attr(
-    unstable_error_generic_member_access,
-    feature(error_generic_member_access)
-)]
 #![cfg_attr(unstable_ptr_metadata, feature(ptr_metadata))]
-// `has_*` is only emitted for build_safely's known features; `error_generic_member_access`
-// and `ptr_metadata` go via `OtherFeature`, which only ever emits `unstable_*`
-#![cfg(all(
-    has_default_field_values,
-    unstable_error_generic_member_access,
-    unstable_ptr_metadata
-))]
+// `has_*` is only emitted for build_safely's known features; `ptr_metadata` goes via
+// `OtherFeature`, which only ever emits `unstable_*`
+#![cfg(all(has_default_field_values, unstable_ptr_metadata))]
 // field names mimic the C++ structs these DSTs mirror
 #![allow(non_snake_case)]
 
-use std::alloc::{Layout, LayoutError};
-use std::error::{Error, request_ref, request_value};
-use std::io;
+use std::alloc::Layout;
+use std::error::Error;
 use std::mem::{offset_of, size_of, size_of_val};
 
 use derive_dst::DST;
@@ -121,31 +112,15 @@ fn new_rejects_a_size_smaller_than_the_head() {
 }
 
 #[test]
-fn layout_errors_are_sourced_and_provided() {
+fn layout_errors_are_sourced() {
     let err = DeviceDetails::new(usize::MAX).unwrap_err();
     assert!(matches!(err, InvalidDeviceDetails::InvalidLayout(_)));
 
     // Error::source
     assert!(err.source().is_some());
-    // Error::provide: the LayoutError is provided by reference ...
-    assert!(request_ref::<LayoutError>(&err).is_some());
-    // ... and an io::ErrorKind is provided for all variants
-    assert_eq!(
-        request_value::<io::ErrorKind>(&err),
-        Some(io::ErrorKind::InvalidData)
-    );
     assert_eq!(
         err.to_string(),
         "invalid layout requested for a DeviceDetails buffer"
-    );
-}
-
-#[test]
-fn invalid_size_also_provides_error_kind() {
-    let err = DeviceDetails::new(6).unwrap_err();
-    assert_eq!(
-        request_value::<io::ErrorKind>(&err),
-        Some(io::ErrorKind::InvalidData)
     );
 }
 

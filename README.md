@@ -14,8 +14,7 @@ The derive generates:
   tail elements for a buffer of `size` bytes.
 - **`InvalidFoo`** — a dedicated error enum (named `Invalid` + the struct name) with variants
   `InvalidLayout(LayoutError)` and `InvalidSize { requested, valid }`, implementing `Debug`,
-  `Clone`, `PartialEq`, `Eq`, `Display`, `Error::source`, `Error::provide` (provides the
-  `LayoutError` via `provide_ref` and `io::ErrorKind::InvalidData`) and `From<LayoutError>`.
+  `Clone`, `PartialEq`, `Eq`, `Display`, `Error::source` and `From<LayoutError>`.
 
 ## Example
 
@@ -62,7 +61,6 @@ impl DeviceDetails {
 
 ```rust
 #![feature(default_field_values)]
-#![feature(error_generic_member_access)]
 #![feature(ptr_metadata)]
 use derive_dst::DST;
 
@@ -79,10 +77,9 @@ pub(crate) struct DeviceDetails {
 
 ## Requirements & contract
 
-- **Nightly toolchain** (pinned via `rust-toolchain.toml`). Three nightly features are required in
+- **Nightly toolchain** (pinned via `rust-toolchain.toml`). Two nightly features are required in
   the crate *using* the derive:
   - `default_field_values` — for the `field: Type = expr` defaults in the struct declaration
-  - `error_generic_member_access` — for the generated `Error::provide` implementation
   - `ptr_metadata` — for the generated `ptr::from_raw_parts_mut` call in `new`
 
   (The proc-macro crate itself additionally uses `proc_macro_diagnostic`, detected via
