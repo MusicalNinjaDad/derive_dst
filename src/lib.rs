@@ -46,9 +46,11 @@
 //!   boundary: once the caller has initialised every field, converts the box into the initialised
 //!   type. The typical pattern is a user-written `new` that calls `new_uninit`, performs any
 //!   additional initialisation and then calls `assume_init`.
-//! - `DeviceDetails::layout_for(size: usize) -> Result<(Layout, usize, usize), InvalidDeviceDetails>`
-//!   — returns the [`Layout`], the byte offset of the unsized tail and the number of tail elements
-//!   for a buffer of `size` bytes (the mirror has the identical layout, so this serves both).
+//! - `DeviceDetails::layout_for(size: usize) -> Result<(Layout, usize, <[u16] as Pointee>::Metadata), InvalidDeviceDetails>`
+//!   — returns the [`Layout`], the byte offset of the unsized tail and the tail element count
+//!   (typed as the tail slice's `Pointee::Metadata`, i.e. the fat-pointer metadata — a `usize`
+//!   for `[T]`) for a buffer of `size` bytes (the mirror has the identical layout, so this
+//!   serves both).
 //! - `InvalidDeviceDetails` — a dedicated error enum with variants
 //!   `InvalidLayout(::core::alloc::LayoutError)` and `InvalidSize { requested: usize, valid: usize }`,
 //!   implementing `Debug`, `Clone`, `PartialEq`, `Eq`, `Display`, `From<LayoutError>` and
@@ -252,6 +254,10 @@ impl<'ast> DstStruct<'ast> {
         let tail_vis = &self.tail.vis;
         let tail_ident = self.tail.ident.as_ref().expect("named fields");
         let elem = self.tail_elem;
+        // The tail slice's pointer-metadata type: the type used for the tail element count
+        // throughout the generated signatures & returns (`usize` for `[T]`, but spelled via
+        // `Pointee` so the signatures mirror the fat pointer's metadata).
+        let count_ty = quote! { <[#elem] as ::core::ptr::Pointee>::Metadata };
 
         quote! {
             #[derive(Debug, Clone, PartialEq, Eq)]
@@ -370,8 +376,10 @@ impl<'ast> DstStruct<'ast> {
                     ::core::result::Result::Ok(boxed)
                 }
 
-                #[doc = "Calculate the `(layout, offset of the unsized tail, number of tail elements)`"]
-                #[doc = "for a `Self` buffer of `size` bytes. The `Uninit` mirror has the identical layout."]
+                #[doc = "Calculate the `(layout, offset of the unsized tail, tail element count)`"]
+                #[doc = "for a `Self` buffer of `size` bytes. The count is typed as the tail slice's"]
+                #[doc = "`Pointee::Metadata` (a `usize` for `[T]`), matching the fat-pointer metadata."]
+                #[doc = "The `Uninit` mirror has the identical layout."]
                 #[doc = ""]
                 #[doc = "# Errors"]
                 #[doc = "Returns `Err(InvalidLayout(..))` if the layout cannot be computed and"]
@@ -383,7 +391,7 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "in [`new_uninit`][Self::new_uninit]."]
                 pub fn layout_for(
                     size: usize,
-                ) -> ::core::result::Result<(::core::alloc::Layout, usize, usize), #err> {
+                ) -> ::core::result::Result<(::core::alloc::Layout, usize, #count_ty), #err> {
                     // sequential `extend` reproduces the repr(C) placement of the sized head
                     let mut prefix = ::core::alloc::Layout::new::<()>();
                     #(
@@ -397,7 +405,7 @@ impl<'ast> DstStruct<'ast> {
                             valid: prefix.pad_to_align().size(),
                         });
                     };
-                    let count = if elem_size == 0 { 0 } else { tail_bytes / elem_size };
+                    let count: #count_ty = if elem_size == 0 { 0 } else { tail_bytes / elem_size };
 
                     let tail = ::core::alloc::Layout::array::<#elem>(count)?;
                     let (extended, offset) = prefix.extend(tail)?;
