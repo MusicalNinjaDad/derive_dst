@@ -304,10 +304,6 @@ impl<'ast> DstStruct<'ast> {
                         count,
                     );
 
-                    #[expect(
-                        unsafe_code,
-                        reason = "allocation validated by layout_for; tail metadata matches the unsized last field"
-                    )]
                     let mut boxed = unsafe { ::std::boxed::Box::from_raw(raw) };
                     #(boxed.#head_idents = #defaults;)*
 
