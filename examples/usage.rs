@@ -19,7 +19,7 @@ impl CStruct {
 
         uninit.headSize.write(tail_offset as u32);
         uninit.tailElements.write(tail_count as u32);
-        
+
         unsafe { uninit.assume_init() }
     }
 

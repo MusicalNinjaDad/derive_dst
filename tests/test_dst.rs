@@ -1,21 +1,20 @@
-#![cfg_attr(unstable_default_field_values, feature(default_field_values))]
 #![cfg_attr(unstable_ptr_metadata, feature(ptr_metadata))]
 // `has_*` is only emitted for build_safely's known features; `ptr_metadata` goes via
 // `OtherFeature`, which only ever emits `unstable_*`
-#![cfg(all(has_default_field_values, unstable_ptr_metadata))]
+#![cfg(unstable_ptr_metadata)]
 // field names mimic the C++ structs these DSTs mirror
 #![allow(non_snake_case)]
 
 use std::alloc::{Layout, LayoutError};
 use std::error::Error;
-use std::mem::{offset_of, size_of, size_of_val};
+use std::mem::{offset_of, size_of_val};
 
 use derive_dst::DST;
 
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq, DST)]
 struct DeviceDetails {
-    cbSize: u32 = size_of::<u32>() as u32,
+    cbSize: u32,
     DevicePath: [u16],
 }
 
@@ -30,41 +29,27 @@ struct DeviceDetailsShadow {
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq, DST)]
 struct MultiHead {
-    a: u8 = 1,
-    b: u32 = 2,
-    tail: [u8],
-}
-
-/// Defaults are optional: no sized field is required to declare a `= expr`.
-#[repr(C)]
-#[derive(Debug, PartialEq, Eq, DST)]
-struct NoDefaults {
-    a: u32,
+    a: u8,
+    b: u32,
     tail: [u8],
 }
 
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq, DST)]
-#[expect(
-    unevaluated_default_field_value,
-    reason = "default is only evaluated during construction; we test it via `Generic::new_uninit_for_size`"
-)]
 struct Generic<T> {
-    tag: u8 = 7,
+    tag: u8,
     items: [T],
 }
 
-/// `new_uninit_for_size` + write the tail + `assume_init`.
+/// `new_uninit_for_size` + write every field + `assume_init`.
 fn init_details(size: usize) -> Box<DeviceDetails> {
     let (mut uninit, (_layout, _offset, _count)) =
         DeviceDetails::new_uninit_for_size(size).unwrap();
-    // the declared default was already written by `new_uninit_for_size`
-    // SAFETY: `new_uninit_for_size` wrote the default into `cbSize`
-    assert_eq!(unsafe { uninit.cbSize.assume_init_read() }, 4);
+    uninit.cbSize.write(4);
     for (i, word) in uninit.DevicePath.iter_mut().enumerate() {
         word.write(0xA000 + i as u16);
     }
-    // SAFETY: `cbSize` (default) and every `DevicePath` word are initialised
+    // SAFETY: `cbSize` and every `DevicePath` word are initialised
     unsafe { uninit.assume_init() }
 }
 
@@ -164,9 +149,8 @@ fn multi_head_layout_matches_repr_c() {
     assert_eq!(offset, 8); // tail offset, reported by layout_for_size
 
     let (mut uninit, (_layout, _offset, _count)) = MultiHead::new_uninit_for_size(12).unwrap();
-    // SAFETY: `new_uninit_for_size` wrote the declared defaults
-    assert_eq!(unsafe { uninit.a.assume_init_read() }, 1);
-    assert_eq!(unsafe { uninit.b.assume_init_read() }, 2);
+    uninit.a.write(1);
+    uninit.b.write(2);
     for byte in uninit.tail.iter_mut() {
         byte.write(0);
     }
@@ -185,8 +169,7 @@ fn generic_tail() {
     );
 
     let (mut uninit, (_layout, _offset, _count)) = Generic::<u16>::new_uninit_for_size(12).unwrap();
-    // SAFETY: `new_uninit_for_size` wrote the declared default
-    assert_eq!(unsafe { uninit.tag.assume_init_read() }, 7);
+    uninit.tag.write(7);
     for item in uninit.items.iter_mut() {
         item.write(0);
     }
@@ -198,23 +181,6 @@ fn generic_tail() {
     // 11 does not match the padded layout (12); not an error, the Layout says so
     let (_uninit, (layout, _offset, _count)) = Generic::<u16>::new_uninit_for_size(11).unwrap();
     assert_eq!(layout.size(), 12);
-}
-
-#[test]
-fn defaults_are_optional() {
-    // repr(C): a at 0, tail [u8] at 4; total for count n = align_up(4 + n, 4)
-    let (layout, offset, count) = NoDefaults::layout_for_size(8).unwrap();
-    assert_eq!((layout.size(), layout.align(), offset, count), (8, 4, 4, 4));
-
-    let (mut uninit, (_layout, _offset, _count)) = NoDefaults::new_uninit_for_size(8).unwrap();
-    uninit.a.write(42);
-    for byte in uninit.tail.iter_mut() {
-        byte.write(1);
-    }
-    // SAFETY: all fields are initialised
-    let value = unsafe { uninit.assume_init() };
-    assert_eq!(value.a, 42);
-    assert_eq!(&value.tail[..], &[1, 1, 1, 1]);
 }
 
 #[test]
@@ -252,13 +218,12 @@ fn layout_for_count_reports_layout_offset_and_count() {
 fn new_uninit_for_count_allocates_for_that_count() {
     let (mut uninit, (layout, offset, count)) = DeviceDetails::new_uninit_for_count(2).unwrap();
     assert_eq!((layout.size(), offset, count), (8, 4, 2));
-    // SAFETY: `new_uninit_for_count` wrote the declared default
-    assert_eq!(unsafe { uninit.cbSize.assume_init_read() }, 4);
+    uninit.cbSize.write(4);
     assert_eq!(uninit.DevicePath.len(), 2);
     for (i, word) in uninit.DevicePath.iter_mut().enumerate() {
         word.write(0xB000 + i as u16);
     }
-    // SAFETY: `cbSize` (default) and both `DevicePath` words are initialised
+    // SAFETY: `cbSize` and both `DevicePath` words are initialised
     let details = unsafe { uninit.assume_init() };
     assert_eq!(details.cbSize, 4);
     assert_eq!(&details.DevicePath[..], &[0xB000, 0xB001]);
@@ -297,7 +262,7 @@ fn new_uninit_returns_layout_offset_and_count_alongside_the_box() {
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq, DST)]
 struct ZstTail {
-    tag: u8 = 1,
+    tag: u8,
     tail: [()],
 }
 
@@ -311,10 +276,11 @@ fn zst_tail_element_is_supported() {
     let (layout, offset, count) = ZstTail::layout_for_count(5).unwrap();
     assert_eq!((layout.size(), offset, count), (1, 1, 5));
 
-    let (uninit, (layout, offset, count)) = ZstTail::new_uninit_for_size(4).unwrap();
+    let (mut uninit, (layout, offset, count)) = ZstTail::new_uninit_for_size(4).unwrap();
     assert_eq!((layout.size(), offset, count), (1, 1, 0));
     assert!(uninit.tail.is_empty());
-    // SAFETY: `tag` holds its declared default; the tail has no elements to initialise
+    uninit.tag.write(1);
+    // SAFETY: `tag` written; the tail has no elements to initialise
     let value = unsafe { uninit.assume_init() };
     assert_eq!(value.tag, 1);
     assert!(value.tail.is_empty());
@@ -322,10 +288,42 @@ fn zst_tail_element_is_supported() {
     let (mut uninit, (_layout, _offset, count)) = ZstTail::new_uninit_for_count(3).unwrap();
     assert_eq!(count, 3);
     assert_eq!(uninit.tail.len(), 3);
+    uninit.tag.write(1);
     for unit in uninit.tail.iter_mut() {
         unit.write(());
     }
-    // SAFETY: `tag` default + every (zero-sized) tail element written
+    // SAFETY: `tag` + every (zero-sized) tail element written
     let value = unsafe { uninit.assume_init() };
+    assert_eq!(value.tag, 1);
     assert_eq!(value.tail.len(), 3);
+}
+
+/// Attributes on the struct and on the fields are mirrored onto the `Uninit` mirror and its
+/// fields (except `derive` & `doc`) — including `#[cfg]`, which also gates the generated
+/// per-field statements, so a cfg'd-out field is consistently absent from the original struct,
+/// the mirror and the generated code alike.
+#[repr(C)]
+#[derive(Debug, PartialEq, Eq, DST)]
+struct CfgGatedField {
+    a: u32,
+    #[cfg(any())] // never enabled: dropped from the struct, the mirror and the generated code
+    b: u32,
+    tail: [u8],
+}
+
+#[test]
+fn cfg_gated_field_is_consistent_between_struct_mirror_and_generated_code() {
+    // repr(C): a at 0, tail at 4 — the cfg'd-out `b` contributes nothing anywhere
+    let (layout, offset, count) = CfgGatedField::layout_for_size(8).unwrap();
+    assert_eq!((layout.size(), layout.align(), offset, count), (8, 4, 4, 4));
+
+    let (mut uninit, (_layout, _offset, _count)) = CfgGatedField::new_uninit_for_size(8).unwrap();
+    uninit.a.write(9);
+    for byte in uninit.tail.iter_mut() {
+        byte.write(1);
+    }
+    // SAFETY: all (remaining) fields are initialised
+    let value = unsafe { uninit.assume_init() };
+    assert_eq!(value.a, 9);
+    assert_eq!(&value.tail[..], &[1, 1, 1, 1]);
 }

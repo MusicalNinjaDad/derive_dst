@@ -10,16 +10,19 @@ writing your own `pub fn new` that wraps these helpers, and no implementation de
 - **`UninitFoo`** — a `#[repr(C)]` mirror struct (named `Uninit` + the struct name) in which every
   field is wrapped in `MaybeUninit`. `MaybeUninit<T>` has the same size, alignment and ABI as `T`
   but no validity invariant, so the mirror has a layout identical to `Foo` yet is valid for *any*
-  bit pattern, including a fresh uninitialised allocation.
+  bit pattern, including a fresh uninitialised allocation. The mirror carries the **same
+  attributes** as `Foo` (copied verbatim — lint levels, `cfg`/`cfg_attr` gates, extra `repr` hints,
+  ...) except `derive` and `doc`, and each mirrored field likewise carries its original field's
+  attributes except `derive` and `doc`.
 - **`Foo::new_uninit_for_size(size: usize)` / `Foo::new_uninit_for_count(count: <[T] as Pointee>::Metadata)`**
   → `Result<(Box<UninitFoo>, (Layout, usize, <[T] as Pointee>::Metadata)), LayoutError>` — **safe**
   allocating constructors taking the total buffer size or the tail element count: they compute the
   layout, allocate a buffer of that layout, attach the tail element count as pointer metadata and
   return it boxed **together with the `(Layout, tail offset, tail count)` tuple** — the same tuple
   the `layout_for_*` constructors return — so initialisation routines do not need to call
-  `layout_for_*` again. Sized fields with a
-  declared default (`field: Type = expr`) are initialised with it; everything else is left for the
-  caller. A `size` that does not match the correctly aligned and padded layout is *not* an error —
+  `layout_for_*` again. The allocation is entirely **uninitialised**: write every field (via
+  `MaybeUninit::write`, e.g. in your own `new`) before `assume_init`. A `size` that does not match
+  the correctly aligned and padded layout is *not* an error —
   compare the returned `layout.size()` with the requested `size` yourself and decide how to handle
   it before `assume_init`.
 - **`Foo::new_uninit_for((layout, tail_offset, count)) -> (Box<UninitFoo>, (Layout, usize, count))`** —
@@ -86,14 +89,13 @@ impl DeviceDetails {
 ### After (with `derive_dst`)
 
 ```rust
-#![feature(default_field_values)]
 #![feature(ptr_metadata)]
 use derive_dst::DST;
 
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq, DST)]
 pub struct DeviceDetails {
-    cbSize: u32 = size_of::<u32>() as u32,
+    cbSize: u32,
     DevicePath: [u16],
 }
 
@@ -104,10 +106,11 @@ impl DeviceDetails {
         let (mut uninit, (layout, _tail_offset, _count)) = Self::new_uninit_for_size(size)?;
         // A mismatched size is not an error from the derive; validate it yourself:
         assert_eq!(layout.size(), size, "size must match the padded layout");
+        uninit.cbSize.write(size_of::<u32>() as u32);
         for word in uninit.DevicePath.iter_mut() {
-            word.write(0); // cbSize default was already written
+            word.write(0);
         }
-        // SAFETY: `cbSize` (default) and every `DevicePath` word are initialised
+        // SAFETY: `cbSize` and every `DevicePath` word are initialised
         Ok(unsafe { uninit.assume_init() })
     }
 }
@@ -133,10 +136,9 @@ assert_eq!((layout.size(), tail_offset, count), (8, 4, 2));
 
 ## Requirements & contract
 
-- **Nightly toolchain** (pinned via `rust-toolchain.toml`). Nightly features required in the crate
-  *using* the derive:
-  - `ptr_metadata` — for the generated `ptr::from_raw_parts_mut` / `ptr::metadata` calls
-  - `default_field_values` — only if sized fields declare `field: Type = expr` defaults
+- **Nightly toolchain** (pinned via `rust-toolchain.toml`). The only nightly feature required in
+  the crate *using* the derive is `ptr_metadata` — for the generated `ptr::from_raw_parts_mut` /
+  `ptr::metadata` calls.
 
   (The proc-macro crate itself additionally uses `proc_macro_diagnostic`, detected via
   [`build_safely`](https://crates.io/crates/build_safely), for rich compiler errors.)
@@ -148,8 +150,9 @@ assert_eq!((layout.size(), tail_offset, count), (8, 4, 2));
   `size_of::<T>()` / `Layout::array::<T>()` well-defined. Zero-sized elements (`tail: [()]`) are
   allowed: `layout_for_size` then maps any `size` to a tail count of 0 (a `checked_div` that yields
   0 on a zero divisor, so it cannot panic), while `layout_for_count` accepts any count.
-- Sized fields *may* declare a default value `field: Type = expr`; the `new_uninit_for_*`
-  constructors write these.
+- Default field values (`field: Type = expr`) are **not** supported and are rejected with a
+  spanned compile error (the `UninitFoo` mirror could not carry them); write every field in your
+  own constructor (e.g. `new`) before `assume_init`.
 - Everything generated (the `UninitFoo` mirror and all methods) is **private to the module** the
   struct is declared in — write your own `pub` wrappers (e.g. `pub fn new`) around them.
 

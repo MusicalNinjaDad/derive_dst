@@ -7,14 +7,13 @@
 //! For
 //!
 //! ```
-//! #![feature(default_field_values)]
 //! #![feature(ptr_metadata)]
 //! use derive_dst::DST;
 //!
 //! #[repr(C)]
 //! #[derive(Debug, PartialEq, Eq, DST)]
 //! struct DeviceDetails {
-//!     cbSize: u32 = ::core::mem::size_of::<u32>() as u32,
+//!     cbSize: u32,
 //!     DevicePath: [u16],
 //! }
 //!
@@ -22,11 +21,12 @@
 //! assert_eq!(layout.size(), 8); // 8 is a valid size: 4-byte head + 2 x u16, correctly padded
 //! assert_eq!(tail_offset, 4);
 //! assert_eq!(count, 2);
-//! // `cbSize` already holds its declared default; initialise the tail:
+//! // the allocation is uninitialised: write every field...
+//! uninit.cbSize.write(4);
 //! for word in uninit.DevicePath.iter_mut() {
 //!     word.write(0);
 //! }
-//! // SAFETY: every field (the defaulted `cbSize` and all tail words) is initialised.
+//! // SAFETY: every field (`cbSize` and all tail words) is initialised.
 //! let details = unsafe { uninit.assume_init() };
 //! assert_eq!(details.cbSize, 4);
 //! assert_eq!(details.DevicePath.len(), 2);
@@ -40,7 +40,11 @@
 //!   [`MaybeUninit`] (`cbSize: MaybeUninit<u32>`, `DevicePath: [MaybeUninit<u16>]`). `MaybeUninit<T>`
 //!   is guaranteed to have the same size, alignment and ABI as `T` but no validity invariant, so the
 //!   mirror has a layout identical to `DeviceDetails` yet is a valid value for *any* bit pattern —
-//!   including a fresh, uninitialised allocation.
+//!   including a fresh, uninitialised allocation. The mirror carries the **same attributes** as
+//!   `DeviceDetails` — copied verbatim, so lint levels (`allow`/`expect`/...), `cfg`/`cfg_attr`
+//!   gates, `repr` hints, ... all apply to the mirror too — except `derive` and `doc` (the mirror
+//!   gets its own `#[derive(Debug)]` and docs), and each mirrored field likewise carries its
+//!   original field's attributes except `derive` and `doc`.
 //! - `DeviceDetails::new_uninit_for_size(size: usize) -> Result<(Box<UninitDeviceDetails>, (Layout, usize, <[u16] as Pointee>::Metadata)), LayoutError>`
 //!   and `DeviceDetails::new_uninit_for_count(count: <[u16] as Pointee>::Metadata) -> Result<(Box<UninitDeviceDetails>, (Layout, usize, <[u16] as Pointee>::Metadata)), LayoutError>`
 //!   — **safe** allocating constructors, taking the total buffer size or the tail element count
@@ -48,9 +52,9 @@
 //!   [`layout_for_count`][Self::layout_for_count], allocate a buffer of that layout, attach the
 //!   tail element count as the pointer metadata and return it boxed **together with the
 //!   `(Layout, tail offset, tail count)` tuple** — the same tuple the `layout_for_*` constructors
-//!   return — so initialisation routines do not need to call `layout_for_*` again. Any sized field that declares a default
-//!   (`field: Type = expr`) is initialised with it (via [`MaybeUninit::write`]); everything
-//!   else is left for the caller to write. A `size` that does not match the correctly aligned and
+//!   return — so initialisation routines do not need to call `layout_for_*` again. The allocation
+//!   is entirely **uninitialised**: the caller writes every field (via [`MaybeUninit::write`])
+//!   before `assume_init`. A `size` that does not match the correctly aligned and
 //!   padded layout is **not** rejected: the returned `Layout` carries the valid size
 //!   (`layout.size()`), so the caller can compare it with the requested `size` and decide how to
 //!   handle a mismatch before calling `assume_init`.
@@ -76,8 +80,7 @@
 //! # Requirements
 //!
 //! - a **nightly** toolchain (pinned via `rust-toolchain.toml`); the crate *using* the derive needs
-//!   - `#![feature(ptr_metadata)]` for the generated `ptr::from_raw_parts_mut` / `ptr::metadata` calls,
-//!   - `#![feature(default_field_values)]` only if sized fields declare `= expr` defaults.
+//!   `#![feature(ptr_metadata)]` for the generated `ptr::from_raw_parts_mut` / `ptr::metadata` calls.
 //!
 //!   The proc-macro itself gets rich, spanned compiler errors from
 //!   [`proc_macro2_diagnostic`](https://github.com/MusicalNinjaDad/proc_macro2_diagnostic), which
@@ -90,8 +93,9 @@
 //!   `size_of::<T>()` / `Layout::array::<T>()` well-defined. Zero-sized elements (`tail: [()]`) are
 //!   allowed: `layout_for_size` then maps any `size` to a tail count of 0 (the divide is
 //!   `checked_div(..).unwrap_or(0)`, which cannot panic), while `layout_for_count` accepts any count;
-//! - sized fields *may* declare a default value (`cbSize: u32 = ...`); defaults are optional and are
-//!   written by the `new_uninit_for_*` constructors when present.
+//! - default field values (`field: Type = expr`) are **not** supported and are rejected with a
+//!   spanned error: the `Uninit` mirror could not carry them, so the caller's own constructor
+//!   (e.g. `new`) writes every field before `assume_init`.
 //!
 //! # Errors
 //!
@@ -108,8 +112,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
 use quote::{format_ident, quote};
 use syn::{
-    Data, DeriveInput, Field, Fields, Generics, Ident, Meta, Token, Type, punctuated::Punctuated,
-    spanned::Spanned,
+    Attribute, Data, DeriveInput, Field, Fields, Generics, Ident, Meta, Token, Type,
+    punctuated::Punctuated, spanned::Spanned,
 };
 
 #[proc_macro_derive(DST)]
@@ -135,13 +139,103 @@ fn impl_dst(input: TokenStream2) -> DiagnosticStream {
 pub(crate) struct DstStruct<'ast> {
     name: &'ast Ident,
     generics: &'ast Generics,
-    /// The sized "head" fields (all but the last); a declared `= expr` default is written by
-    /// `new_uninit`, but defaults are optional.
+    /// All attributes of the original struct (`repr`, lints, `cfg` gates, ...); mirrored onto
+    /// the generated `Uninit` struct except `derive` & `doc` (see [`copyable_attr`]).
+    attrs: &'ast [Attribute],
+    /// The sized "head" fields (all but the last). Default field values (`= expr`) are not
+    /// supported — the mirror could not carry them — so the caller's constructor writes them.
     head: Vec<&'ast Field>,
     /// The last field, of type `[T]`.
     tail: &'ast Field,
     /// `T` in the tail `[T]`.
     tail_elem: &'ast Type,
+}
+
+/// Attributes that are **not** copied onto the generated `Uninit` mirror struct or its fields:
+/// - `derive` — the mirror gets its own fixed `#[derive(Debug)]`, and its fields are
+///   `MaybeUninit<_>`, so the original's derives would not apply to it anyway;
+/// - `doc` — the mirror gets its own generated documentation.
+///
+/// Everything else is mirrored: `repr` (including the required `repr(C)`, plus e.g. `align` /
+/// `packed`, which the mirror needs for an identical layout), lint levels (`allow` / `warn` /
+/// `deny` / `expect` / `forbid`), `cfg` / `cfg_attr` gates, `non_exhaustive`, `deprecated`, ...
+fn is_excluded_meta(meta: &Meta) -> bool {
+    meta.path().is_ident("derive") || meta.path().is_ident("doc")
+}
+
+/// The `Meta` to copy onto the mirror, or `None` to drop it. Everything is copied **verbatim** —
+/// no attribute is ever synthesized or rewritten (so restriction lints such as
+/// `deny(allow_attributes)` / `deny(expect_attributes)` cannot fire on generated code; the only
+/// attributes the macro itself emits on the mirror are `#[doc]` and `#[derive(Debug)]`): only
+/// `derive` and `doc` are dropped. `cfg_attr` is rebuilt recursively without the excluded
+/// attributes, so e.g. `#[cfg_attr(feature = "serde", derive(Serialize))]` does not leak a
+/// `derive` onto the mirror; a `cfg_attr` left with no attributes at all is dropped entirely.
+fn copyable_meta(meta: &Meta) -> Option<Meta> {
+    if is_excluded_meta(meta) {
+        return None;
+    }
+    if let Meta::List(list) = meta
+        && list.path.is_ident("cfg_attr")
+    {
+        let args = list
+            .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+            .ok()?;
+        let mut args = args.into_iter();
+        // `cfg_attr(condition, attr, ...)`: keep the condition, filter the attributes
+        let condition = args.next()?;
+        let kept: Vec<Meta> = args.filter_map(|meta| copyable_meta(&meta)).collect();
+        return if kept.is_empty() {
+            None
+        } else {
+            Some(syn::parse_quote! { cfg_attr(#condition, #(#kept),*) })
+        };
+    }
+    Some(meta.clone())
+}
+
+/// [`copyable_meta`] for a whole `#[...]` attribute (keeping its outer style and span).
+fn copyable_attr(attr: &Attribute) -> Option<Attribute> {
+    Some(Attribute {
+        meta: copyable_meta(&attr.meta)?,
+        ..attr.clone()
+    })
+}
+
+/// The attributes to place on a mirrored field, so lints & `cfg` gates apply to the mirror
+/// exactly as to the original field.
+fn mirrored_field_attrs(field: &Field) -> Vec<Attribute> {
+    field.attrs.iter().filter_map(copyable_attr).collect()
+}
+
+/// Whether `meta` is a `cfg` gate (`cfg`/`cfg_attr` of cfg gates only) — the only attributes
+/// that are both meaningful and stable on the generated per-field *statements* (lint attributes
+/// on expression statements are experimental, and the mirror field already carries them).
+fn is_cfg_gate_meta(meta: &Meta) -> bool {
+    if meta.path().is_ident("cfg") {
+        return true;
+    }
+    if let Meta::List(list) = meta
+        && list.path.is_ident("cfg_attr")
+        && let ::core::result::Result::Ok(args) =
+            list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+    {
+        let mut args = args.into_iter();
+        let _condition = args.next();
+        let rest: Vec<Meta> = args.collect();
+        return !rest.is_empty() && rest.iter().all(is_cfg_gate_meta);
+    }
+    false
+}
+
+/// The `cfg` gates of a field, repeated on the generated statements that touch that field, so a
+/// cfg'd-out field is skipped there too — exactly as in the original struct and the mirror.
+fn field_cfg_gates(field: &Field) -> Vec<Attribute> {
+    field
+        .attrs
+        .iter()
+        .filter(|attr| is_cfg_gate_meta(&attr.meta))
+        .cloned()
+        .collect()
 }
 
 impl<'ast> DstStruct<'ast> {
@@ -234,42 +328,75 @@ impl<'ast> DstStruct<'ast> {
             head.push(field);
         }
 
+        // Default field values (`field: Type = expr`) are deliberately not part of the API: the
+        // `Uninit` mirror cannot carry them (its fields are `MaybeUninit<T>`), so the caller's
+        // own constructor (e.g. `new`) writes every field before `assume_init`. Checked last so
+        // the structural errors above keep their spans.
+        for field in fields.iter() {
+            if let Some((_eq, expr)) = &field.default {
+                return error("DST does not support default field values (`field: Type = expr`)")
+                    .add_help(
+                        expr.span(),
+                        "write the field in your constructor (e.g. `new`) before `assume_init`",
+                    );
+            }
+        }
+
         Ok(Self {
             name,
             generics: &ast.generics,
+            attrs: &ast.attrs,
             head,
             tail,
             tail_elem,
         })
     }
 
-    /// Generates the `UninitFoo` mirror struct and the `new_uninit_for_size` /
-    /// `new_uninit_for_count` / `assume_init` / `layout_for_size` / `layout_for_count` methods
-    /// (all returning `core::alloc::LayoutError` on failure).
+    /// Generates the `UninitFoo` mirror struct — carrying the original struct's attributes
+    /// (except `derive` & `doc`) and, per field, the field's attributes (except `derive` & `doc`)
+    /// — and the `new_uninit_for_size` / `new_uninit_for_count` / `assume_init` /
+    /// `layout_for_size` / `layout_for_count` methods (all returning `core::alloc::LayoutError`
+    /// on failure).
     pub(crate) fn generate(&self) -> TokenStream2 {
         let name = self.name;
         let uninit = format_ident!("Uninit{}", name);
         let generics = self.generics;
         let (impl_generics, ty_generics, where_clause) = self.generics.split_for_impl();
 
-        let head_idents = self
+        let elem = self.tail_elem;
+        // All attributes of the original struct — `repr` (the required `repr(C)` plus any
+        // `align` / `packed`), lint levels, `cfg` / `cfg_attr` gates, ... — are mirrored onto
+        // the `Uninit` struct verbatim, except `derive` & `doc` (see `copyable_meta`).
+        let struct_attrs: Vec<Attribute> = self.attrs.iter().filter_map(copyable_attr).collect();
+        // Each sized head field, mirrored with its own attributes onto the `Uninit` field.
+        let uninit_head_fields = self
             .head
             .iter()
-            .map(|field| field.ident.as_ref().expect("named fields"));
-        let head_tys = self.head.iter().map(|field| &field.ty);
-        // repetition site in `layout_header` (Map is not Copy)
-        let head_tys_header = head_tys.clone();
-        // sized fields with a declared `= expr` default: `(ident, expr)` pairs written by new_uninit
-        let defaulted = self.head.iter().filter_map(|field| {
-            field
-                .default
-                .as_ref()
-                .map(|(_eq, expr)| (field.ident.as_ref().expect("named fields"), expr))
-        });
-        let d_idents = defaulted.clone().map(|(ident, _)| ident);
-        let d_exprs = defaulted.map(|(_, expr)| expr);
+            .map(|field| {
+                let attrs = mirrored_field_attrs(field);
+                let ident = field.ident.as_ref().expect("named fields");
+                let ty = &field.ty;
+                quote! { #(#attrs)* #ident: ::core::mem::MaybeUninit<#ty>, }
+            })
+            .collect::<Vec<_>>();
         let tail_ident = self.tail.ident.as_ref().expect("named fields");
-        let elem = self.tail_elem;
+        let tail_attrs = mirrored_field_attrs(self.tail);
+        let uninit_tail_field =
+            quote! { #(#tail_attrs)* #tail_ident: [::core::mem::MaybeUninit<#elem>], };
+        // one `layout_header` extend per sized head field, carrying that field's `cfg` gates
+        // (so a `#[cfg]`-gated field is skipped here too, exactly as in the structs)
+        let header_extends = self
+            .head
+            .iter()
+            .map(|field| {
+                let gates = field_cfg_gates(field);
+                let ty = &field.ty;
+                quote! {
+                    #(#gates)*
+                    prefix = prefix.extend(::core::alloc::Layout::new::<#ty>())?.0;
+                }
+            })
+            .collect::<Vec<_>>();
         // The tail slice's pointer-metadata type: the type used for the tail element count
         // throughout the generated signatures & returns (`usize` for `[T]`, but spelled via
         // `Pointee` so the signatures mirror the fat pointer's metadata).
@@ -296,16 +423,18 @@ impl<'ast> DstStruct<'ast> {
             .push(syn::parse_quote! { #elem: ::core::marker::Sized });
 
         quote! {
+            // the original struct's attributes (incl. `repr(C)` — required by `parse`), except
+            // `derive` & `doc`; the generated docs & `#[derive(Debug)]` below are the mirror's own
+            #(#struct_attrs)*
             #[doc = concat!("`MaybeUninit` mirror of [`", stringify!(#name), "}`]: identical `repr(C)` layout, but every field is")]
             #[doc = "wrapped in `MaybeUninit`, so any bit pattern — including a fresh, uninitialised"]
             #[doc = "allocation — is a valid value. Constructed by `new_uninit_for_size` /"]
             #[doc = "`new_uninit_for_count`; converted back to the initialised type with"]
             #[doc = "[`Self::assume_init`]."]
             #[derive(Debug)]
-            #[repr(C)]
             struct #uninit #generics #where_clause {
-                #(#head_idents: ::core::mem::MaybeUninit<#head_tys>,)*
-                #tail_ident: [::core::mem::MaybeUninit<#elem>],
+                #(#uninit_head_fields)*
+                #uninit_tail_field
             }
 
             impl #impl_generics #name #ty_generics #impl_where {
@@ -315,8 +444,7 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "The tail element count is derived from `size` by [`layout_for_size`][Self::layout_for_size];"]
                 #[doc = "the allocation then proceeds exactly as for [`new_uninit_for`][Self::new_uninit_for]."]
                 #[doc = ""]
-                #[doc = "The allocation is **uninitialised**, except for any sized field that declares a default"]
-                #[doc = "(`field: Type = expr`), which is written here. Initialise the remaining fields with"]
+                #[doc = "The allocation is entirely **uninitialised**: write every field with"]
                 #[doc = "[`MaybeUninit::write`], then convert with `assume_init` on the returned box."]
                 #[doc = ""]
                 #[doc = "# Errors"]
@@ -380,8 +508,7 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "[`new_uninit_for_count`][Self::new_uninit_for_count]: pass it the tuple returned by"]
                 #[doc = "[`layout_for_size`][Self::layout_for_size] / [`layout_for_count`][Self::layout_for_count]."]
                 #[doc = ""]
-                #[doc = "The allocation is **uninitialised**, except for any sized field that declares a default"]
-                #[doc = "(`field: Type = expr`), which is written here. Initialise the remaining fields with"]
+                #[doc = "The allocation is entirely **uninitialised**: write every field with"]
                 #[doc = "[`MaybeUninit::write`], then convert with `assume_init` on the returned box."]
                 #[doc = ""]
                 #[doc = "# Aborts"]
@@ -432,9 +559,6 @@ impl<'ast> DstStruct<'ast> {
                     // - every field of the mirror is `MaybeUninit<_>` (no validity invariant), so the
                     //   uninitialised allocation is a valid value of the mirror type
                     let mut boxed = unsafe { ::std::boxed::Box::from_raw(wide) };
-
-                    // declared defaults (`field: Type = expr`) are written safely via MaybeUninit::write
-                    #(boxed.#d_idents.write(#d_exprs);)*
 
                     (boxed, (layout, offset, count))
                 }
@@ -506,9 +630,7 @@ impl<'ast> DstStruct<'ast> {
                 fn layout_header() -> ::core::result::Result<::core::alloc::Layout, ::core::alloc::LayoutError> {
                     // sequential `extend` reproduces the repr(C) placement of the sized head
                     let mut prefix = ::core::alloc::Layout::new::<()>();
-                    #(
-                        prefix = prefix.extend(::core::alloc::Layout::new::<#head_tys_header>())?.0;
-                    )*
+                    #(#header_extends)*
                     ::core::result::Result::Ok(prefix)
                 }
 

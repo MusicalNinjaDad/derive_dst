@@ -7,8 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Default field values (`field: Type = expr`) are no longer supported and are rejected with a
+  spanned compile error: the `UninitFoo` mirror cannot carry them (its fields are
+  `MaybeUninit<T>`), so the uniform contract is now that the caller's own constructor (e.g. `new`)
+  writes every field before `assume_init`. Crates using the derive no longer need
+  `#![feature(default_field_values)]`.
+
 ### Changed
 
+- The generated `UninitFoo` mirror struct now carries the **same attributes** as the annotated
+  struct, and each mirrored field the same attributes as the original field — copied verbatim, so
+  lint levels (`allow`/`expect`/...), `cfg`/`cfg_attr` gates and additional `repr` hints (e.g.
+  `align`/`packed`) apply to the mirror too. Only `derive` and `doc` are excluded (the mirror gets
+  its own `#[derive(Debug)]` and docs; `derive`/`doc` nested inside `cfg_attr` are stripped as
+  well). No attribute is ever synthesized or rewritten, so restriction lints such as
+  `deny(allow_attributes)` cannot fire on generated code. Per-field attributes are also placed on
+  the generated per-field statements, so a `#[cfg]`-gated field is consistently absent from the
+  original struct, the mirror and the generated code.
 - Both generated impl headers now carry explicit bounds — `where [T]: Pointee<Metadata = usize>,
   T: Sized` — in a single place each: the tail slice's fat-pointer metadata is pinned to `usize` by
   the bound (what the unsafe `from_raw_parts_mut` / `ptr::metadata` code relies on), and the tail
