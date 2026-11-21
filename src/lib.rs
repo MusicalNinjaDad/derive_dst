@@ -130,7 +130,8 @@ impl<'ast> DstStruct<'ast> {
             }
         };
 
-        // repr(C) is required so the generated layout matches a C struct
+        // repr(C) is required so the generated layout matches a C structand can be generated with
+        // Layout::extend
         let has_repr_c = ast.attrs.iter().any(|attr| {
             if !attr.meta.path().is_ident("repr") {
                 return false;
@@ -172,14 +173,16 @@ impl<'ast> DstStruct<'ast> {
                     );
                 }
                 Type::TraitObject(trait_object) => {
-                    return error("only the last field of a DST struct may be unsized").add_help(
+                    return error("only the last field of a DST struct may be unsized").add_note(
                         trait_object.span(),
-                        "move this trait object to the last position",
+                        "deriving DSTs with `dyn Trait` as a tail is not supported",
                     );
                 }
                 Type::Path(path) if path.path.is_ident("str") => {
-                    return error("only the last field of a DST struct may be unsized")
-                        .add_help(path.span(), "move this `str` to the last position");
+                    return error("only the last field of a DST struct may be unsized").add_note(
+                        path.span(),
+                        "deriving DSTs with `str` as a tail is not supported",
+                    );
                 }
                 _ => {}
             }
