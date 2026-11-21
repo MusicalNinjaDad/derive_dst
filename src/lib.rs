@@ -299,12 +299,14 @@ impl<'ast> DstStruct<'ast> {
                         ::core::result::Result::Err(_) => ::std::alloc::handle_alloc_error(layout),
                     };
 
-                    let raw = ::core::ptr::from_raw_parts_mut::<Self>(
-                        raw.cast::<()>().as_ptr(),
+                    let data_pointer = raw.cast::<()>().as_ptr();
+
+                    let wide = ::core::ptr::from_raw_parts_mut::<Self>(
+                        data_pointer,
                         count,
                     );
 
-                    let mut boxed = unsafe { ::std::boxed::Box::from_raw(raw) };
+                    let mut boxed = unsafe { ::std::boxed::Box::from_raw(wide) };
                     #(boxed.#head_idents = #defaults;)*
 
                     ::core::result::Result::Ok(boxed)
