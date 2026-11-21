@@ -5,11 +5,12 @@ on:
     paths: 
     - "**.rs"
     - "Cargo.toml"
+    - "rust-toolchain.toml"
     - ".github/workflows/rust.yml"
   pull_request:
   workflow_call:
   schedule:
-    - cron: '0 0 * * 0'
+    - cron: '30 4 * * 6'
 
 env:
     CARGO_TERM_COLOR: always
@@ -28,40 +29,52 @@ jobs:
 
   test:
     needs: skip_check
-    if: needs.skip_check.outputs.should_skip != 'true'
+    if: ${{ github.event_name == 'workflow_call' || needs.skip_check.outputs.should_skip != 'true' }}
 
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v7.0.1
+    - name: Install latest toolchain from rust-toolchain.toml
+      run: |
+        rustup install
+        rustup update
     - name: Run tests
       run: cargo test --no-fail-fast
 
   lint:
     needs: skip_check
-    if: needs.skip_check.outputs.should_skip != 'true'
+    if: ${{ github.event_name == 'workflow_call' || needs.skip_check.outputs.should_skip != 'true' }}
 
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v7.0.1
+    - name: Install latest toolchain from rust-toolchain.toml
+      run: |
+        rustup install
+        rustup update
     - name: clippy
       run: cargo clippy -- --deny warnings
 
   fmt:
     needs: skip_check
-    if: needs.skip_check.outputs.should_skip != 'true'
+    if: ${{ github.event_name == 'workflow_call' || needs.skip_check.outputs.should_skip != 'true' }}
 
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v7.0.1
+    - name: Install latest toolchain from rust-toolchain.toml
+      run: |
+        rustup install
+        rustup update
     - name: fmt
       run: cargo fmt --check
 
   report:
-    if: ${{ always() }}
-    needs: [test, lint, fmt]
+    if: ${{ always() && github.event_name == 'schedule' }}
+    needs: [skip_check, test, lint, fmt]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -69,8 +82,12 @@ jobs:
     steps:
     - uses: actions/checkout@v7.0.1
     - name: Create issue on failure
-      if: ${{ github.event_name == 'schedule' && (needs.test.result == 'failure' || needs.lint.result == 'failure' || needs.fmt.result == 'failure') }}
+      if: ${{ needs.skip_check.result == 'failure' || needs.test.result == 'failure' || needs.lint.result == 'failure' || needs.fmt.result == 'failure' }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        gh issue create --title "Weekly CI failed" --body "Run ID: $GITHUB_RUN_ID" --assignee "MusicalNinjaDad"
+        if gh issue list --state open --search "Weekly CI failed in:title" --json body --jq '.[].body' | grep -q "Run ID: $GITHUB_RUN_ID"; then
+          echo "Issue already exists for run $GITHUB_RUN_ID"
+        else
+          gh issue create --title "Weekly CI failed" --body "Run ID: $GITHUB_RUN_ID" --assignee "MusicalNinjaDad"
+        fi
