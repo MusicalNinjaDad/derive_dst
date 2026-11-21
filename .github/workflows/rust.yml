@@ -72,9 +72,31 @@ jobs:
     - name: fmt
       run: cargo fmt --check
 
+  miri:
+    needs: skip_check
+    if: ${{ github.event_name == 'workflow_call' || needs.skip_check.outputs.should_skip != 'true' }}
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7.0.1
+    - name: Install latest toolchain from rust-toolchain.toml
+      run: |
+        rustup install
+        rustup update
+    - name: install nextest
+      uses: taiki-e/install-action@v2.90.3
+      with:
+        tool: |
+          nextest
+    - name: Run tests
+      env:
+        MIRIFLAGS: -Zmiri-disable-isolation
+      run: cargo miri nextest run --no-fail-fast -- --skip errors
+
   report:
     if: ${{ always() && github.event_name == 'schedule' }}
-    needs: [skip_check, test, lint, fmt]
+    needs: [skip_check, test, lint, fmt, miri]
     runs-on: ubuntu-latest
     permissions:
       contents: read
