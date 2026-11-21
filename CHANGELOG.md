@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The generated `InvalidFoo` error no longer implements `Error::provide`, so crates using the
+  derive no longer need `#![feature(error_generic_member_access)]`.
 - `new` now builds the `*mut Self` with `core::ptr::from_raw_parts_mut` (thin data pointer +
   `count` metadata) instead of casting a `*mut [T]`; crates using the derive now also need
   `#![feature(ptr_metadata)]`.

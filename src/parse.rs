@@ -177,13 +177,6 @@ impl<'ast> DstStruct<'ast> {
                         Self::InvalidSize { .. } => ::core::option::Option::None,
                     }
                 }
-
-                fn provide<'a>(&'a self, request: &mut ::std::error::Request<'a>) {
-                    if let Self::InvalidLayout(error) = self {
-                        request.provide_ref(error);
-                    }
-                    request.provide_value(::std::io::ErrorKind::InvalidData);
-                }
             }
 
             impl ::core::convert::From<::core::alloc::LayoutError> for #err {

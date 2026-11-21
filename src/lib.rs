@@ -8,7 +8,6 @@
 //!
 //! ```
 //! #![feature(default_field_values)]
-//! #![feature(error_generic_member_access)]
 //! #![feature(ptr_metadata)]
 //! use derive_dst::DST;
 //!
@@ -29,8 +28,7 @@
 //! - `InvalidDeviceDetails` — a dedicated error enum with variants
 //!   `InvalidLayout(::core::alloc::LayoutError)` and `InvalidSize { requested: usize, valid: usize }`,
 //!   implementing `Debug`, `Clone`, `PartialEq`, `Eq`, `Display`, `From<LayoutError>` and
-//!   `std::error::Error` — including `Error::source` and `Error::provide` (which provides the
-//!   `LayoutError` via `provide_ref` and `io::ErrorKind::InvalidData`).
+//!   `std::error::Error` — including `Error::source`.
 //! - `DeviceDetails::new(size: usize) -> Result<Box<Self>, InvalidDeviceDetails>` — validates the
 //!   requested size via [`layout_for`][Self::layout_for], allocates a zeroed buffer of the correct
 //!   layout, initialises every sized field with its declared default (`field: Type = expr`) and
@@ -42,8 +40,7 @@
 //! # Requirements
 //!
 //! - a **nightly** toolchain (pinned via `rust-toolchain.toml`); the crate *using* the derive needs
-//!   - `#![feature(default_field_values)]` for the `field: Type = expr` defaults,
-//!   - `#![feature(error_generic_member_access)]` for the generated `Error::provide`, and
+//!   - `#![feature(default_field_values)]` for the `field: Type = expr` defaults, and
 //!   - `#![feature(ptr_metadata)]` for the generated `ptr::from_raw_parts_mut` call in `new`.
 //!
 //!   The proc-macro itself gets rich, spanned compiler errors from
