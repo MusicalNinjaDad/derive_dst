@@ -22,6 +22,11 @@ writing your own `pub fn new` that wraps these helpers, and no implementation de
   caller. A `size` that does not match the correctly aligned and padded layout is *not* an error —
   compare the returned `layout.size()` with the requested `size` yourself and decide how to handle
   it before `assume_init`.
+- **`Foo::new_uninit_for((layout, tail_offset, count)) -> (Box<UninitFoo>, (Layout, usize, count))`** —
+  the **single allocation site** shared by `new_uninit_for_size` / `new_uninit_for_count` (they just
+  feed it the tuple their `layout_for_*` counterpart returns): allocate → `ptr::from_raw_parts_mut`
+  → `Box::from_raw`, exactly once, so the layout is computed exactly once per call and the `unsafe`
+  sequence exists in one place only.
 - **`UninitFoo::assume_init(self: Box<Self>) -> Box<Foo>`** — the single `unsafe` boundary: converts
   the box to the initialised type once every field has been written (typically inside a user-written
   `new` that calls `new_uninit_for_size` / `new_uninit_for_count`, does any extra initialisation,
@@ -30,7 +35,10 @@ writing your own `pub fn new` that wraps these helpers, and no implementation de
   → `Result<(Layout, usize, <[T] as Pointee>::Metadata), LayoutError>` — a layout constructor pair
   returning the `(Layout, tail offset, tail count)` tuple: the [`Layout`], the byte offset of the
   unsized tail and the tail element count (the tail slice's `Pointee::Metadata`, i.e. the
-  fat-pointer metadata — a `usize` for `[T]`).
+  fat-pointer metadata — a `usize` for `[T]`). They are built from two shared helpers:
+  `Foo::layout_header() -> Result<Layout, LayoutError>` (the sized head's layout, computed once) and
+  `Foo::layout_with_header(header, count) -> Result<(Layout, usize, count), LayoutError>` (head +
+  tail of `count` elements, padded to alignment).
 - On failure all of the above return **`core::alloc::LayoutError`** — only ever produced by a
   genuinely failing `Layout` computation (e.g. the tail array overflowing `isize::MAX`).
 
@@ -108,6 +116,10 @@ impl DeviceDetails {
 // - `UninitDeviceDetails` — the MaybeUninit mirror struct
 // - `DeviceDetails::new_uninit_for_size(size)` / `new_uninit_for_count(count)`
 //   -> `Result<(Box<UninitDeviceDetails>, (Layout, usize, count)), LayoutError>`
+// - `DeviceDetails::new_uninit_for((layout, offset, count))` — the single allocation site
+//   -> `(Box<UninitDeviceDetails>, (Layout, usize, count))`
+// - `DeviceDetails::layout_header()` / `layout_with_header(header, count)` — the head/tail
+//   layout helpers shared by `layout_for_size` / `layout_for_count`
 // - `UninitDeviceDetails::assume_init(Box<Self>) -> Box<DeviceDetails>` (unsafe)
 // - `DeviceDetails::layout_for_size(size)` / `layout_for_count(count)`
 ```

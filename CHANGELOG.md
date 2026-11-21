@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The generated layout code is now DRY: the sized head's layout is computed once in a shared
+  `layout_header()` helper, head+tail assembly lives in `layout_with_header(header, count)`, and the
+  `unsafe` allocate → `from_raw_parts_mut` → `Box::from_raw` sequence lives in exactly one place, the
+  new `new_uninit_for((Layout, tail_offset, count))` helper (returns `(Box<UninitFoo>, (Layout,
+  tail_offset, count))`, no `Result` — the layout is taken as given). `layout_for_size` /
+  `layout_for_count` and `new_uninit_for_size` / `new_uninit_for_count` are now thin wrappers over
+  these, so `new_uninit_for_size` computes the head layout once (previously three times) and the
+  head-layout `extend` loop is emitted once instead of twice (faster compiles).
 - `new_uninit_for_size` / `new_uninit_for_count` now return
   `(Box<UninitFoo>, (Layout, tail_offset, count))`: the `(Layout, tail offset, tail count)` tuple is
   nested inside the outer tuple, exactly the tuple the `layout_for_*` constructors return, so the
