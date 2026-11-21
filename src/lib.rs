@@ -108,8 +108,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
 use quote::{format_ident, quote};
 use syn::{
-    Data, DeriveInput, Expr, Field, Fields, Generics, Ident, Meta, Token, Type,
-    punctuated::Punctuated, spanned::Spanned,
+    Data, DeriveInput, Field, Fields, Generics, Ident, Meta, Token, Type, punctuated::Punctuated,
+    spanned::Spanned,
 };
 
 #[proc_macro_derive(DST)]
@@ -260,18 +260,14 @@ impl<'ast> DstStruct<'ast> {
         // repetition site in `layout_header` (Map is not Copy)
         let head_tys_header = head_tys.clone();
         // sized fields with a declared `= expr` default: `(ident, expr)` pairs written by new_uninit
-        let defaulted: Vec<(&Ident, &Expr)> = self
-            .head
-            .iter()
-            .filter_map(|field| {
-                field
-                    .default
-                    .as_ref()
-                    .map(|(_eq, expr)| (field.ident.as_ref().expect("named fields"), expr))
-            })
-            .collect();
-        let d_idents = defaulted.iter().map(|(ident, _)| *ident);
-        let d_exprs = defaulted.iter().map(|(_, expr)| *expr);
+        let defaulted = self.head.iter().filter_map(|field| {
+            field
+                .default
+                .as_ref()
+                .map(|(_eq, expr)| (field.ident.as_ref().expect("named fields"), expr))
+        });
+        let d_idents = defaulted.clone().map(|(ident, _)| ident);
+        let d_exprs = defaulted.map(|(_, expr)| expr);
         let tail_ident = self.tail.ident.as_ref().expect("named fields");
         let elem = self.tail_elem;
         // The tail slice's pointer-metadata type: the type used for the tail element count
