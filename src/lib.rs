@@ -18,7 +18,7 @@
 //!     DevicePath: [u16],
 //! }
 //!
-//! let (mut uninit, layout, tail_offset, count) = DeviceDetails::new_uninit_for_size(8).unwrap();
+//! let (mut uninit, (layout, tail_offset, count)) = DeviceDetails::new_uninit_for_size(8).unwrap();
 //! assert_eq!(layout.size(), 8); // 8 is a valid size: 4-byte head + 2 x u16, correctly padded
 //! assert_eq!(tail_offset, 4);
 //! assert_eq!(count, 2);
@@ -41,14 +41,14 @@
 //!   is guaranteed to have the same size, alignment and ABI as `T` but no validity invariant, so the
 //!   mirror has a layout identical to `DeviceDetails` yet is a valid value for *any* bit pattern —
 //!   including a fresh, uninitialised allocation.
-//! - `DeviceDetails::new_uninit_for_size(size: usize) -> Result<(Box<UninitDeviceDetails>, Layout, usize, <[u16] as Pointee>::Metadata), LayoutError>`
-//!   and `DeviceDetails::new_uninit_for_count(count: <[u16] as Pointee>::Metadata) -> Result<(Box<UninitDeviceDetails>, Layout, usize, <[u16] as Pointee>::Metadata), LayoutError>`
+//! - `DeviceDetails::new_uninit_for_size(size: usize) -> Result<(Box<UninitDeviceDetails>, (Layout, usize, <[u16] as Pointee>::Metadata)), LayoutError>`
+//!   and `DeviceDetails::new_uninit_for_count(count: <[u16] as Pointee>::Metadata) -> Result<(Box<UninitDeviceDetails>, (Layout, usize, <[u16] as Pointee>::Metadata)), LayoutError>`
 //!   — **safe** allocating constructors, taking the total buffer size or the tail element count
 //!   respectively: they compute the layout via [`layout_for_size`][Self::layout_for_size] /
 //!   [`layout_for_count`][Self::layout_for_count], allocate a buffer of that layout, attach the
-//!   tail element count as the pointer metadata and return it boxed **together with the computed
-//!   `Layout`, the byte offset of the tail and the tail element count**, so initialisation
-//!   routines do not need to call `layout_for_*` again. Any sized field that declares a default
+//!   tail element count as the pointer metadata and return it boxed **together with the
+//!   `(Layout, tail offset, tail count)` tuple** — the same tuple the `layout_for_*` constructors
+//!   return — so initialisation routines do not need to call `layout_for_*` again. Any sized field that declares a default
 //!   (`field: Type = expr`) is initialised with it (via [`MaybeUninit::write`]); everything
 //!   else is left for the caller to write. A `size` that does not match the correctly aligned and
 //!   padded layout is **not** rejected: the returned `Layout` carries the valid size
@@ -60,7 +60,7 @@
 //!   `new_uninit_for_count`), performs any additional initialisation and then calls `assume_init`.
 //! - `DeviceDetails::layout_for_size(size: usize) -> Result<(Layout, usize, <[u16] as Pointee>::Metadata), LayoutError>`
 //!   and `DeviceDetails::layout_for_count(count: <[u16] as Pointee>::Metadata) -> Result<(Layout, usize, <[u16] as Pointee>::Metadata), LayoutError>`
-//!   — return the [`Layout`], the byte offset of the unsized tail and the tail element count
+//!   — return the `(Layout, tail offset, tail count)` tuple: the [`Layout`], the byte offset of the unsized tail and the tail element count
 //!   (typed as the tail slice's `Pointee::Metadata`, i.e. the fat-pointer metadata — a `usize`
 //!   for `[T]`) for a buffer of `size` bytes or of `count` tail elements (the mirror has the
 //!   identical layout, so this serves both).
@@ -288,8 +288,7 @@ impl<'ast> DstStruct<'ast> {
 
             impl #impl_generics #name #ty_generics #where_clause {
                 #[doc = "Allocate a buffer for a `Self` value of `size` bytes and return it boxed as the"]
-                #[doc = "`Uninit` mirror of `Self`, together with the computed [`Layout`], the byte offset of"]
-                #[doc = "the unsized tail and the tail element count."]
+                #[doc = "`Uninit` mirror of `Self`, together with the `(Layout, tail offset, tail count)` tuple."]
                 #[doc = ""]
                 #[doc = "The tail element count is derived from `size` by [`layout_for_size`][Self::layout_for_size];"]
                 #[doc = "the allocation then proceeds exactly as for [`new_uninit_for_count`][Self::new_uninit_for_count]."]
@@ -303,9 +302,10 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "overflows) — see [`layout_for_size`][Self::layout_for_size]."]
                 #[doc = ""]
                 #[doc = "# Returns"]
-                #[doc = "The boxed mirror, the computed [`Layout`], the byte offset of the unsized tail and the"]
-                #[doc = "tail element count (the latter typed as the tail slice's `Pointee::Metadata`), so"]
-                #[doc = "initialisation routines do not need to call [`layout_for_size`][Self::layout_for_size] again."]
+                #[doc = "The boxed mirror together with the `(Layout, tail offset, tail count)` tuple — the same"]
+                #[doc = "tuple [`layout_for_size`][Self::layout_for_size] returns (the count typed as the tail"]
+                #[doc = "slice's `Pointee::Metadata`) — so initialisation routines do not need to call"]
+                #[doc = "[`layout_for_size`][Self::layout_for_size] again."]
                 #[doc = ""]
                 #[doc = "Note: a `size` that does not match the correctly aligned and padded layout for the derived"]
                 #[doc = "tail count is **not** rejected — the returned `Layout` carries the valid size"]
@@ -316,9 +316,7 @@ impl<'ast> DstStruct<'ast> {
                 ) -> ::core::result::Result<
                     (
                         ::std::boxed::Box<#uninit #ty_generics>,
-                        ::core::alloc::Layout,
-                        usize,
-                        #count_ty,
+                        (::core::alloc::Layout, usize, #count_ty),
                     ),
                     ::core::alloc::LayoutError,
                 > {
@@ -327,9 +325,9 @@ impl<'ast> DstStruct<'ast> {
                 }
 
                 #[doc = "Allocate a buffer holding `count` tail elements and return it boxed as the `Uninit`"]
-                #[doc = "mirror of `Self`, together with the computed [`Layout`], the byte offset of the unsized"]
-                #[doc = "tail and the tail element count. `count` is typed as the tail slice's"]
-                #[doc = "`Pointee::Metadata` (a `usize` for `[T]`), matching the fat-pointer metadata."]
+                #[doc = "mirror of `Self`, together with the `(Layout, tail offset, tail count)` tuple. `count` is"]
+                #[doc = "typed as the tail slice's `Pointee::Metadata` (a `usize` for `[T]`), matching the"]
+                #[doc = "fat-pointer metadata."]
                 #[doc = ""]
                 #[doc = "The allocation is **uninitialised**, except for any sized field that declares a default"]
                 #[doc = "(`field: Type = expr`), which is written here. Initialise the remaining fields with"]
@@ -340,9 +338,9 @@ impl<'ast> DstStruct<'ast> {
                 #[doc = "(e.g. overflow) — see [`layout_for_count`][Self::layout_for_count]."]
                 #[doc = ""]
                 #[doc = "# Returns"]
-                #[doc = "The boxed mirror, the computed [`Layout`], the byte offset of the unsized tail and the"]
-                #[doc = "tail element count, so initialisation routines do not need to call"]
-                #[doc = "[`layout_for_count`][Self::layout_for_count] again."]
+                #[doc = "The boxed mirror together with the `(Layout, tail offset, tail count)` tuple — the same"]
+                #[doc = "tuple [`layout_for_count`][Self::layout_for_count] returns — so initialisation routines"]
+                #[doc = "do not need to call [`layout_for_count`][Self::layout_for_count] again."]
                 #[doc = ""]
                 #[doc = concat!(
                     "# Implementation safety\n\n",
@@ -361,9 +359,7 @@ impl<'ast> DstStruct<'ast> {
                 ) -> ::core::result::Result<
                     (
                         ::std::boxed::Box<#uninit #ty_generics>,
-                        ::core::alloc::Layout,
-                        usize,
-                        #count_ty,
+                        (::core::alloc::Layout, usize, #count_ty),
                     ),
                     ::core::alloc::LayoutError,
                 > {
@@ -399,7 +395,7 @@ impl<'ast> DstStruct<'ast> {
                     // declared defaults (`field: Type = expr`) are written safely via MaybeUninit::write
                     #(boxed.#d_idents.write(#d_exprs);)*
 
-                    ::core::result::Result::Ok((boxed, layout, offset, count))
+                    ::core::result::Result::Ok((boxed, (layout, offset, count)))
                 }
 
                 #[doc = "Calculate the `(layout, offset of the unsized tail, tail element count)`"]

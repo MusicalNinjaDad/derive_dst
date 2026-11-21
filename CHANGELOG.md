@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `new_uninit_for_size` / `new_uninit_for_count` now return
+  `(Box<UninitFoo>, (Layout, tail_offset, count))`: the `(Layout, tail offset, tail count)` tuple is
+  nested inside the outer tuple, exactly the tuple the `layout_for_*` constructors return, so the
+  two are directly comparable (`assert_eq!(spec, Foo::layout_for_size(size)?)`).
 - The generated `InvalidFoo` error no longer implements `Error::provide`, so crates using the
   derive no longer need `#![feature(error_generic_member_access)]`.
 - `new` is replaced by a **safe** `new_uninit(size) -> Result<Box<UninitFoo>, InvalidFoo>` plus an
