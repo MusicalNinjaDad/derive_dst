@@ -716,7 +716,7 @@ mod tests {
 
     #[test]
     fn remove_derive_from_cfg_attr() {
-        let mut foo: Attribute = parse_quote! {#[cfg_attr(test, derive(Debug), deprecated)]};
+        let mut foo: Attribute = parse_quote! {#[cfg_attr(test, derive(Debug), deprecated, doc = "foo")]};
         let mut expected: Attribute = parse_quote! {#[cfg_attr(test, deprecated)]};
         assert_eq!(keep(&mut foo), Some(&mut expected));
     }
