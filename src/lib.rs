@@ -112,8 +112,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
 use quote::{format_ident, quote};
 use syn::{
-    Attribute, Data, DeriveInput, Field, Fields, Generics, Ident, Meta, Token, Type,
-    punctuated::Punctuated, spanned::Spanned,
+    Attribute, Data, DeriveInput, Field, Fields, Generics, Ident, Meta, Token, Type, parenthesized,
+    parse::Parse, punctuated::Punctuated, spanned::Spanned,
 };
 
 #[proc_macro_derive(DST)]
@@ -673,5 +673,55 @@ impl<'ast> DstStruct<'ast> {
                 }
             }
         }
+    }
+}
+
+fn keep(attr: &mut Attribute) -> Option<&mut Attribute> {
+    (!(attr.path().is_ident("derive") || attr.path().is_ident("doc")))
+        .then_some(attr)
+        .map(|attr| {
+            match &attr.meta {
+                Meta::List(meta_list) if meta_list.path.is_ident("cfg_attr") => todo!(),
+                _ => attr,
+            }
+            // if attr.path().is_ident("cfg_attr") {
+            //     dbg!(&attr);
+            //     let mut content;
+            //     attr.parse_nested_meta(|pnm| {
+            //         parenthesized!(content in pnm.input);
+            //         content
+            //             .parse_terminated(Meta::parse, Token![,])
+            //             .expect("valid cfg_attr")
+            //             .retain(|meta| !meta.path().is_ident("derive"));
+            //         Result::Ok(())
+            //     });
+            //     dbg!(&attr);
+            // }
+            // attr
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use syn::parse_quote;
+
+    use super::*;
+    #[test]
+    fn remove_derive() {
+        let mut foo: Attribute = parse_quote! {#[derive(Debug)]};
+        assert_eq!(keep(&mut foo), None);
+    }
+
+    #[test]
+    fn remove_doc() {
+        let mut foo: Attribute = parse_quote! {#[doc(inline)]};
+        assert_eq!(keep(&mut foo), None);
+    }
+
+    #[test]
+    fn remove_derive_from_cfg_attr() {
+        let mut foo: Attribute = parse_quote! {#[cfg_attr(test, derive(Debug), deprecated)]};
+        let mut expected: Attribute = parse_quote! {#[cfg_attr(test, deprecated)]};
+        assert_eq!(keep(&mut foo), Some(&mut expected));
     }
 }
