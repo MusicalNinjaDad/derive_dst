@@ -279,15 +279,18 @@ impl DstStruct {
     pub(crate) fn generate(self) -> TokenStream2 {
         let DstStruct {
             name,
+            mirror_name,
             generics,
             attrs,
             head,
+            mirror_head,
             tail,
+            mirror_tail,
             tail_elem,
             count_ty,
         } = self;
 
-        let uninit = format_ident!("Uninit{}", name);
+        let uninit_head_fields = mirror_head.pairs();
 
         // one `layout_header` extend per sized head field, carrying that field's `cfg` gates
         // (so a `#[cfg]`-gated field is skipped here too, exactly as in the structs)
@@ -302,11 +305,6 @@ impl DstStruct {
                 prefix = prefix.extend(::core::alloc::Layout::new::<#ty>())?.0;
             }
         });
-
-        // The tail slice's pointer-metadata type: the type used for the tail element count
-        // throughout the generated signatures & returns (`usize` for `[T]`, but spelled via
-        // `Pointee` so the signatures mirror the fat pointer's metadata).
-        let count_ty = quote! { <[#tail_elem] as ::core::ptr::Pointee>::Metadata };
 
         let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
@@ -341,9 +339,9 @@ impl DstStruct {
             #[doc = "`new_uninit_for_count`; converted back to the initialised type with"]
             #[doc = "[`Self::assume_init`]."]
             #[derive(Debug)]
-            struct #uninit #generics #where_clause {
+            struct #mirror_name #generics #where_clause {
                 #(#uninit_head_fields)*
-                #tail
+                #mirror_tail
             }
 
             impl #impl_generics #name #ty_generics #impl_where {
@@ -374,7 +372,7 @@ impl DstStruct {
                     size: usize,
                 ) -> ::core::result::Result<
                     (
-                        ::std::boxed::Box<#uninit #ty_generics>,
+                        ::std::boxed::Box<#mirror_name #ty_generics>,
                         (::core::alloc::Layout, usize, #count_ty),
                     ),
                     ::core::alloc::LayoutError,
@@ -402,7 +400,7 @@ impl DstStruct {
                     count: #count_ty,
                 ) -> ::core::result::Result<
                     (
-                        ::std::boxed::Box<#uninit #ty_generics>,
+                        ::std::boxed::Box<#mirror_name #ty_generics>,
                         (::core::alloc::Layout, usize, #count_ty),
                     ),
                     ::core::alloc::LayoutError,
@@ -439,7 +437,7 @@ impl DstStruct {
                 fn new_uninit_for(
                     (layout, offset, count): (::core::alloc::Layout, usize, #count_ty),
                 ) -> (
-                    ::std::boxed::Box<#uninit #ty_generics>,
+                    ::std::boxed::Box<#mirror_name #ty_generics>,
                     (::core::alloc::Layout, usize, #count_ty),
                 ) {
                     let raw = match <::std::alloc::Global as ::core::alloc::Allocator>::allocate(
@@ -450,7 +448,7 @@ impl DstStruct {
                         ::core::result::Result::Err(_) => ::std::alloc::handle_alloc_error(layout),
                     };
 
-                    let wide = ::core::ptr::from_raw_parts_mut::<#uninit #ty_generics>(
+                    let wide = ::core::ptr::from_raw_parts_mut::<#mirror_name #ty_generics>(
                         raw.cast::<()>().as_ptr(),
                         count,
                     );
@@ -563,7 +561,7 @@ impl DstStruct {
                 }
             }
 
-            impl #impl_generics #uninit #ty_generics #impl_where {
+            impl #impl_generics #mirror_name #ty_generics #impl_where {
                 #[doc = "Convert into the fully initialised struct, reusing the same allocation."]
                 #[doc = ""]
                 #[doc = "# Safety"]
@@ -683,7 +681,7 @@ mod tests {
         let device_info = DstStruct::parse(input).unwrap();
         assert_eq!(device_info.name, format_ident!("DeviceDetails"));
         assert_eq!(
-            device_info.tail,
+            device_info.mirror_tail,
             parse_quote!(DevicePath: [::core::mem::MaybeUninit<u16>])
         );
         assert_eq!(device_info.tail_elem, parse_quote!(u16));
