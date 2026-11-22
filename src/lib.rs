@@ -315,7 +315,7 @@ impl DstStruct {
             count_ty,
         } = self;
 
-        let uninit_head_fields = mirror_head.pairs();
+        let mirror_head_fields = mirror_head.pairs();
         let header_extends = layout_head.pairs();
 
         let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
@@ -331,7 +331,7 @@ impl DstStruct {
             #[doc = "[`Self::assume_init`]."]
             #[derive(Debug)]
             struct #mirror_name #generics #where_clause {
-                #(#uninit_head_fields)*
+                #(#mirror_head_fields)*
                 #mirror_tail
             }
 
