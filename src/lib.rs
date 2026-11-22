@@ -156,12 +156,17 @@ pub(crate) struct DstStruct {
     count_ty: Type,
 }
 
-fn parse_struct(data: Data, name: &Ident) -> DiagnosticResult<Punctuated<Field, Token![,]>> {
+fn parse_struct(
+    data: Data,
+    name: &Ident,
+) -> DiagnosticResult<(Punctuated<Field, Token![,]>, Field)> {
     match data {
         Data::Struct(struct_data) => match struct_data.fields {
-            Fields::Named(fields) => {
-                fields.named.iter().try_for_each(has_no_default)?;
-                Ok(fields.named)
+            Fields::Named(mut fields) => {
+                let tail = fields.named.pop().expect("not a unit struct");
+                fields.named.iter().try_for_each(is_valid_head_field)?;
+                has_no_default(&tail)?;
+                Ok((fields.named, tail))
             }
             Fields::Unnamed(fields) => {
                 error("DST can only be derived for a struct with named fields").add_help(
@@ -176,6 +181,28 @@ fn parse_struct(data: Data, name: &Ident) -> DiagnosticResult<Punctuated<Field, 
             .add_help(enum_data.enum_token.span(), "not a struct"),
         Data::Union(union_data) => error("DST can only be derived for a struct")
             .add_help(union_data.union_token.span(), "not a struct"),
+    }
+}
+
+fn is_valid_head_field(field: &Field) -> DiagnosticResult<()> {
+    match &field.ty {
+        Type::Slice(slice) => error("only the last field of a DST struct may be unsized").add_help(
+            slice.bracket_token.span.span(),
+            "move this slice to the last position, or make it sized e.g. `[u16; 4]`",
+        ),
+        Type::TraitObject(trait_object) => {
+            error("only the last field of a DST struct may be unsized").add_note(
+                trait_object.span(),
+                "deriving DSTs with `dyn Trait` as a tail is not supported",
+            )
+        }
+        Type::Path(path) if path.path.is_ident("str") => {
+            error("only the last field of a DST struct may be unsized").add_note(
+                path.span(),
+                "deriving DSTs with `str` as a tail is not supported",
+            )
+        }
+        _ => has_no_default(field),
     }
 }
 
@@ -196,16 +223,14 @@ impl DstStruct {
         let name = ast.ident;
         let mirror_name = format_ident!("Uninit{}", name);
 
-        let mut fields = parse_struct(ast.data, &name)?;
-
-        remove_doc_and_derive(&mut ast.attrs);
-
         if ast.attrs.iter().find(repr_c).is_none() {
             return error("DST requires #[repr(C)] so the layout can be generated for allocation")
                 .add_help(name.span(), "add #[repr(C)] above this");
         };
+        remove_doc_and_derive(&mut ast.attrs);
 
-        let tail = fields.pop().expect("at least one field");
+        let (fields, tail) = parse_struct(ast.data, &name)?;
+
         let tail_elem = match &tail.ty {
             Type::Slice(slice) => *slice.elem.clone(),
             _ => return error(
@@ -218,30 +243,6 @@ impl DstStruct {
         mirror_tail.ty = parse_quote!([::core::mem::MaybeUninit<#tail_elem>]);
 
         let count_ty = parse_quote!(<[#tail_elem] as ::core::ptr::Pointee>::Metadata);
-
-        for field in fields.iter() {
-            match &field.ty {
-                Type::Slice(slice) => {
-                    return error("only the last field of a DST struct may be unsized").add_help(
-                        slice.bracket_token.span.span(),
-                        "move this slice to the last position, or make it sized e.g. `[u16; 4]`",
-                    );
-                }
-                Type::TraitObject(trait_object) => {
-                    return error("only the last field of a DST struct may be unsized").add_note(
-                        trait_object.span(),
-                        "deriving DSTs with `dyn Trait` as a tail is not supported",
-                    );
-                }
-                Type::Path(path) if path.path.is_ident("str") => {
-                    return error("only the last field of a DST struct may be unsized").add_note(
-                        path.span(),
-                        "deriving DSTs with `str` as a tail is not supported",
-                    );
-                }
-                _ => {}
-            }
-        }
 
         let mut mirror_head = fields.clone();
         for field in mirror_head.iter_mut() {

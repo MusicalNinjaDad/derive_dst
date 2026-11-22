@@ -1,12 +1,12 @@
-error: DST can only be derived for a struct
+error: DST requires #[repr(C)] so the layout can be generated for allocation
  --> tests/compilation/fail_NotAStruct.rs:6:10
   |
 6 | #[derive(DST)]
   |          ^^^
   |
-help: not a struct
- --> tests/compilation/fail_NotAStruct.rs:7:1
+help: add #[repr(C)] above this
+ --> tests/compilation/fail_NotAStruct.rs:7:6
   |
 7 | enum NotAStruct {
-  | ^^^^
+  |      ^^^^^^^^^^
   = note: this error originates in the derive macro `DST` (in Nightly builds, run with -Z macro-backtrace for more info)
