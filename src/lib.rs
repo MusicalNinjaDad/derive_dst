@@ -136,6 +136,7 @@ fn impl_dst(input: TokenStream2) -> DiagnosticStream {
 }
 
 /// A destructured, validated `#[repr(C)]` struct with named fields and an unsized slice tail.
+#[derive(Debug)]
 pub(crate) struct DstStruct<'ast> {
     name: &'ast Ident,
     generics: &'ast Generics,
@@ -730,5 +731,21 @@ mod tests {
     fn remove_empty_cfg_attr() {
         let mut foo: Attribute = parse_quote! {#[cfg_attr(test, derive(Debug), doc = "foo")]};
         assert_eq!(keep(&mut foo), None);
+    }
+
+    #[test]
+    fn parse_cstruct() {
+        let input: DeriveInput = parse_quote!{
+            #[repr(C)]
+            #[doc(ignore)]
+            #[derive(Debug, DST)]
+            #[cfg_attr(test, deprecated, derive(Clone))]
+            struct DeviceDetails {
+                cbSize: u32,
+                DevicePath: [u16]
+            }
+        };
+        let device_info = DstStruct::parse(&input).unwrap();
+        assert_eq!(device_info.name, &format_ident!("DeviceDetails"));
     }
 }
