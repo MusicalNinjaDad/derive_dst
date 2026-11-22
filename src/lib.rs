@@ -680,17 +680,16 @@ fn keep(attr: &mut Attribute) -> Option<&mut Attribute> {
     (!(attr.path().is_ident("derive") || attr.path().is_ident("doc")))
         .then_some(attr)
         .map(|attr| {
-            match &mut attr.meta {
-                Meta::List(meta_list) if meta_list.path.is_ident("cfg_attr") => {
-                    let mut p: Punctuated<Meta, Token![,]> = meta_list
-                        .parse_args_with(Punctuated::parse_separated_nonempty)
-                        .unwrap();
-                    p.retain(|meta| !meta.path().is_ident("derive"));
-                    meta_list.tokens = p.into_token_stream();
-                    attr
-                }
-                _ => attr,
+            if let Meta::List(meta_list) = &mut attr.meta
+                && meta_list.path.is_ident("cfg_attr")
+            {
+                let mut p: Punctuated<Meta, Token![,]> = meta_list
+                    .parse_args_with(Punctuated::parse_separated_nonempty)
+                    .unwrap();
+                p.retain(|meta| !meta.path().is_ident("derive"));
+                meta_list.tokens = p.into_token_stream();
             }
+            attr
         })
 }
 
