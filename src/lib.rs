@@ -128,9 +128,9 @@ pub fn derive_dst(input: TokenStream1) -> TokenStream1 {
 
 /// Parses & validates the input, then generates the impls and error type.
 fn impl_dst(input: TokenStream2) -> DiagnosticStream {
-    let ast: DeriveInput = syn::parse2(input).expect("derive macro input");
+    let mut ast: DeriveInput = syn::parse2(input).expect("derive macro input");
 
-    let dst = DstStruct::parse(&ast)?;
+    let dst = DstStruct::parse(&mut ast)?;
 
     Ok(dst.generate())
 }
@@ -241,7 +241,7 @@ fn field_cfg_gates(field: &Field) -> Vec<Attribute> {
 
 impl<'ast> DstStruct<'ast> {
     /// Handles all the invariant validation.
-    pub(crate) fn parse(ast: &'ast DeriveInput) -> DiagnosticResult<Self> {
+    pub(crate) fn parse(ast: &'ast mut DeriveInput) -> DiagnosticResult<Self> {
         let name = &ast.ident;
 
         // Fail fast: must be a struct with named fields
@@ -342,6 +342,8 @@ impl<'ast> DstStruct<'ast> {
                     );
             }
         }
+
+        ast.attrs.retain_mut(|attr| keep(attr).is_some());
 
         Ok(Self {
             name,
@@ -735,7 +737,7 @@ mod tests {
 
     #[test]
     fn parse_cstruct() {
-        let input: DeriveInput = parse_quote! {
+        let mut input: DeriveInput = parse_quote! {
             #[repr(C)]
             #[doc(ignore)]
             #[derive(Debug, DST)]
@@ -745,7 +747,7 @@ mod tests {
                 DevicePath: [u16]
             }
         };
-        let device_info = DstStruct::parse(&input).unwrap();
+        let device_info = DstStruct::parse(&mut input).unwrap();
         assert_eq!(device_info.name, &format_ident!("DeviceDetails"));
         assert_eq!(device_info.tail, &parse_quote!(DevicePath: [u16]));
         assert_eq!(device_info.tail_elem, &parse_quote!(u16));
