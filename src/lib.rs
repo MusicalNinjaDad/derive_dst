@@ -140,6 +140,7 @@ fn impl_dst(input: TokenStream2) -> DiagnosticStream {
 pub(crate) struct DstStruct {
     name: Ident,
     mirror_name: Ident,
+    /// Extended with `where T: Sized, [T]: Pointee<Metadata = usize>`
     generics: Generics,
     /// Attributes after stripping doc & derive
     attrs: Vec<Attribute>,
@@ -255,6 +256,18 @@ impl DstStruct {
             field.ty = parse_quote!(::core::mem::MaybeUninit<#ty>)
         }
 
+        let where_clause = match &mut ast.generics.where_clause {
+            Some(where_clause) => where_clause,
+            None => ast.generics.make_where_clause(),
+        };
+
+        where_clause
+            .predicates
+            .push(parse_quote!(#tail_elem: ::core::marker::Sized));
+        where_clause
+            .predicates
+            .push(parse_quote!([#tail_elem]: ::core::ptr::Pointee<Metadata = usize>));
+
         Ok(Self {
             name,
             mirror_name,
@@ -304,27 +317,6 @@ impl DstStruct {
 
         let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-        // Both generated impl headers carry the same explicit bounds, in a single place each:
-        // - `[#elem]: Pointee<Metadata = usize>` pins the tail slice's fat-pointer metadata to
-        //   `usize`, so the count type in the signatures is known to be `usize` *by the bound*
-        //   (not just by projection normalization) — this is what the unsafe code in
-        //   `new_uninit_for` / `assume_init` relies on when attaching/carrying the metadata;
-        // - `#elem: Sized` makes `size_of::<#elem>()` / `Layout::array::<#elem>()` well-defined
-        //   (ZST elements like `()` are fine — they just make the element size 0).
-        let mut impl_where: syn::WhereClause = match &generics.where_clause {
-            Some(where_clause) => where_clause.clone(),
-            None => syn::WhereClause {
-                where_token: Default::default(),
-                predicates: Default::default(),
-            },
-        };
-        impl_where
-            .predicates
-            .push(syn::parse_quote! { [#tail_elem]: ::core::ptr::Pointee<Metadata = usize> });
-        impl_where
-            .predicates
-            .push(syn::parse_quote! { #tail_elem: ::core::marker::Sized });
-
         quote! {
             // the original struct's attributes (incl. `repr(C)` — required by `parse`), except
             // `derive` & `doc`; the generated docs & `#[derive(Debug)]` below are the mirror's own
@@ -340,7 +332,7 @@ impl DstStruct {
                 #mirror_tail
             }
 
-            impl #impl_generics #name #ty_generics #impl_where {
+            impl #impl_generics #name #ty_generics #where_clause {
                 #[doc = "Allocate a buffer for a `Self` value of `size` bytes and return it boxed as the"]
                 #[doc = "`Uninit` mirror of `Self`, together with the `(Layout, tail offset, tail count)` tuple."]
                 #[doc = ""]
@@ -557,7 +549,7 @@ impl DstStruct {
                 }
             }
 
-            impl #impl_generics #mirror_name #ty_generics #impl_where {
+            impl #impl_generics #mirror_name #ty_generics #where_clause {
                 #[doc = "Convert into the fully initialised struct, reusing the same allocation."]
                 #[doc = ""]
                 #[doc = "# Safety"]
