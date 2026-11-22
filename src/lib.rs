@@ -575,33 +575,28 @@ impl DstStruct {
     }
 }
 
-fn is_not_doc_or_derive(meta: &mut Meta) -> bool {
-    !(meta.path().is_ident("derive") || meta.path().is_ident("doc"))
-}
-
-fn keep(meta: &mut Meta) -> Option<&mut Meta> {
-    (is_not_doc_or_derive(meta))
-        .then_some(meta)
-        .and_then(|meta| {
-            if let Meta::List(meta_list) = meta
-                && meta_list.path.is_ident("cfg_attr")
-            {
-                let mut p = meta_list
-                    .parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)
-                    .expect("cfg_attr takes comma separated list");
-                p.retain(|meta| keep(meta).is_some());
-                if p.len() < 2 {
-                    // We stripped all the attributes and just have the condition left
-                    return None;
-                }
-                meta_list.tokens = p.into_token_stream();
-            }
-            Some(meta)
-        })
+fn keep(meta: &mut Meta) -> bool {
+    if let Meta::List(meta_list) = meta
+        && meta_list.path.is_ident("cfg_attr")
+    {
+        let mut p = meta_list
+            .parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)
+            .expect("cfg_attr takes comma separated list");
+        p.retain(keep);
+        if p.len() < 2 {
+            // We stripped all the attributes and just have the condition left
+            false
+        } else {
+            meta_list.tokens = p.into_token_stream();
+            true
+        }
+    } else {
+        !(meta.path().is_ident("derive") || meta.path().is_ident("doc"))
+    }
 }
 
 fn remove_doc_and_derive(attrs: &mut Vec<Attribute>) {
-    attrs.retain_mut(|attr| keep(&mut attr.meta).is_some())
+    attrs.retain_mut(|attr| keep(&mut attr.meta))
 }
 
 fn repr_c(attr: &&Attribute) -> bool {
@@ -627,34 +622,36 @@ mod tests {
     #[test]
     fn remove_derive() {
         let mut foo: Attribute = parse_quote! {#[derive(Debug)]};
-        assert_eq!(keep(&mut foo.meta), None);
+        assert!(!keep(&mut foo.meta));
     }
 
     #[test]
     fn remove_doc() {
         let mut foo: Attribute = parse_quote! {#[doc(inline)]};
-        assert_eq!(keep(&mut foo.meta), None);
+        assert!(!keep(&mut foo.meta));
     }
 
     #[test]
     fn remove_derive_from_cfg_attr() {
         let mut foo: Attribute =
             parse_quote! {#[cfg_attr(test, derive(Debug), deprecated, doc = "foo")]};
-        let mut expected: Attribute = parse_quote! {#[cfg_attr(test, deprecated)]};
-        assert_eq!(keep(&mut foo.meta), Some(&mut expected.meta));
+        let expected: Attribute = parse_quote! {#[cfg_attr(test, deprecated)]};
+        assert!(keep(&mut foo.meta));
+        assert_eq!(foo, expected);
     }
 
     #[test]
     fn remove_empty_cfg_attr() {
         let mut foo: Attribute = parse_quote! {#[cfg_attr(test, derive(Debug), doc = "foo")]};
-        assert_eq!(keep(&mut foo.meta), None);
+        assert!(!keep(&mut foo.meta));
     }
 
     #[test]
     fn nested_cfg_attr() {
         let mut foo: Attribute = parse_quote! {#[cfg_attr(test, cfg_attr(any(), derive(Debug)), cfg_attr(any(), deprecated, doc = "foo"))]};
-        let mut expected: Attribute = parse_quote! {#[cfg_attr(test, cfg_attr(any(), deprecated))]};
-        assert_eq!(keep(&mut foo.meta), Some(&mut expected.meta));
+        let expected: Attribute = parse_quote! {#[cfg_attr(test, cfg_attr(any(), deprecated))]};
+        assert!(keep(&mut foo.meta));
+        assert_eq!(foo, expected);
     }
 
     #[test]
