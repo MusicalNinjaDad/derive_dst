@@ -112,8 +112,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
 use quote::{ToTokens as _, format_ident, quote};
 use syn::{
-    Attribute, Data, DeriveInput, Field, Fields, Generics, Ident, Meta, Token, Type, parse_quote,
-    punctuated::Punctuated, spanned::Spanned,
+    Attribute, Data, DeriveInput, ExprAssign, Field, Fields, Generics, Ident, Meta, Token, Type,
+    parse_quote, punctuated::Punctuated, spanned::Spanned,
 };
 
 #[proc_macro_derive(DST)]
@@ -144,8 +144,8 @@ pub(crate) struct DstStruct {
     generics: Generics,
     /// Attributes after stripping doc & derive
     attrs: Vec<Attribute>,
-    /// The sized "head" fields (all but the last).
-    head: Punctuated<Field, Token![,]>,
+    /// The extend assignments to `prefix` required to build a Layout for the head fields
+    layout_head: Punctuated<ExprAssign, Token![;]>,
     /// MaybeUninit versions of the head fields
     mirror_head: Punctuated<Field, Token![,]>,
     /// MaybeUninit version of the tail field
@@ -256,6 +256,22 @@ impl DstStruct {
             field.ty = parse_quote!(::core::mem::MaybeUninit<#ty>)
         }
 
+        let layout_head: Punctuated<ExprAssign, syn::token::Semi> = fields
+            .iter()
+            .map(|field| -> ExprAssign {
+                let gates = field
+                    .attrs
+                    .iter()
+                    .filter(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"));
+                let ty = &field.ty;
+
+                parse_quote! {
+                    #(#gates)*
+                    prefix = prefix.extend(::core::alloc::Layout::new::<#ty>())?.0
+                }
+            })
+            .collect();
+
         let where_clause = match &mut ast.generics.where_clause {
             Some(where_clause) => where_clause,
             None => ast.generics.make_where_clause(),
@@ -273,7 +289,7 @@ impl DstStruct {
             mirror_name,
             generics: ast.generics,
             attrs: ast.attrs,
-            head: fields,
+            layout_head,
             mirror_head,
             mirror_tail,
             tail_elem,
@@ -292,7 +308,7 @@ impl DstStruct {
             mirror_name,
             generics,
             attrs,
-            head,
+            layout_head,
             mirror_head,
             mirror_tail,
             tail_elem,
@@ -300,20 +316,7 @@ impl DstStruct {
         } = self;
 
         let uninit_head_fields = mirror_head.pairs();
-
-        // one `layout_header` extend per sized head field, carrying that field's `cfg` gates
-        // (so a `#[cfg]`-gated field is skipped here too, exactly as in the structs)
-        let header_extends = head.iter().map(|field| {
-            let gates = field
-                .attrs
-                .iter()
-                .filter(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"));
-            let ty = &field.ty;
-            quote! {
-                #(#gates)*
-                prefix = prefix.extend(::core::alloc::Layout::new::<#ty>())?.0;
-            }
-        });
+        let header_extends = layout_head.pairs();
 
         let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
@@ -525,7 +528,7 @@ impl DstStruct {
                 fn layout_header() -> ::core::result::Result<::core::alloc::Layout, ::core::alloc::LayoutError> {
                     // sequential `extend` reproduces the repr(C) placement of the sized head
                     let mut prefix = ::core::alloc::Layout::new::<()>();
-                    #(#header_extends)*
+                    #(#header_extends)*;
                     ::core::result::Result::Ok(prefix)
                 }
 
