@@ -110,7 +110,7 @@
 use proc_macro::TokenStream as TokenStream1;
 use proc_macro2::{Delimiter::Parenthesis, TokenStream as TokenStream2};
 use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
-use quote::{format_ident, quote};
+use quote::{ToTokens as _, format_ident, quote};
 use syn::{
     Attribute, Data, DeriveInput, Field, Fields, Generics, Ident, Meta, Token, Type, parenthesized,
     parse::Parse, punctuated::Punctuated, spanned::Spanned,
@@ -680,7 +680,7 @@ fn keep(attr: &mut Attribute) -> Option<&mut Attribute> {
     (!(attr.path().is_ident("derive") || attr.path().is_ident("doc")))
         .then_some(attr)
         .map(|attr| {
-            match &attr.meta {
+            match &mut attr.meta {
                 Meta::List(meta_list) if meta_list.path.is_ident("cfg_attr") => {
                     let mut p: Punctuated<Meta, Token![,]> = meta_list
                         .parse_args_with(Punctuated::parse_separated_nonempty)
@@ -690,7 +690,8 @@ fn keep(attr: &mut Attribute) -> Option<&mut Attribute> {
                         dbg!(meta.path().is_ident("derive"));
                         !meta.path().is_ident("derive")
                     });
-                    dbg!(p);
+                    dbg!(&p);
+                    meta_list.tokens = p.into_token_stream();
                     attr
                 }
                 _ => attr,
