@@ -159,7 +159,10 @@ pub(crate) struct DstStruct {
 fn parse_struct(data: Data, name: &Ident) -> DiagnosticResult<Punctuated<Field, Token![,]>> {
     match data {
         Data::Struct(struct_data) => match struct_data.fields {
-            Fields::Named(fields) => Ok(fields.named),
+            Fields::Named(fields) => {
+                fields.named.iter().try_for_each(has_no_default)?;
+                Ok(fields.named)
+            }
             Fields::Unnamed(fields) => {
                 error("DST can only be derived for a struct with named fields").add_help(
                     fields.paren_token.span.span(),
@@ -210,14 +213,13 @@ impl DstStruct {
             )
             .add_help(tail.ty.span(), "this field is sized"),
         };
-        has_no_default(&tail)?;
 
         let mut mirror_tail = tail.clone();
         mirror_tail.ty = parse_quote!([::core::mem::MaybeUninit<#tail_elem>]);
 
         let count_ty = parse_quote!(<[#tail_elem] as ::core::ptr::Pointee>::Metadata);
 
-        for field in fields.iter_mut() {
+        for field in fields.iter() {
             match &field.ty {
                 Type::Slice(slice) => {
                     return error("only the last field of a DST struct may be unsized").add_help(
@@ -239,7 +241,6 @@ impl DstStruct {
                 }
                 _ => {}
             }
-            has_no_default(field)?;
         }
 
         let mut mirror_head = fields.clone();
