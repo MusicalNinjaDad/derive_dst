@@ -109,7 +109,7 @@
 
 use proc_macro::TokenStream as TokenStream1;
 use proc_macro2::TokenStream as TokenStream2;
-use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
+use proc_macro2_diagnostic::{ToTokens, prelude::*};
 use quote::{ToTokens as _, format_ident, quote};
 use syn::{
     Attribute, Data, DeriveInput, ExprAssign, Field, Fields, Generics, Ident, Meta, Token, Type,
@@ -166,13 +166,24 @@ fn parse_struct(data: Data, name: &Ident) -> DiagnosticResult<Punctuated<Field, 
                     "tuple structs are not supported",
                 )
             }
-            Fields::Unit => error("DST can only be derived for a struct with named fields")
-                .add_help(name.span(), "unit structs have no fields"),
+            Fields::Unit => error("DST requires at least one field (an unsized slice tail)")
+                .add_help(name.span(), "add a tail field like `DevicePath: [u16]`"),
         },
         Data::Enum(enum_data) => error("DST can only be derived for a struct")
             .add_help(enum_data.enum_token.span(), "not a struct"),
         Data::Union(union_data) => error("DST can only be derived for a struct")
             .add_help(union_data.union_token.span(), "not a struct"),
+    }
+}
+
+fn has_no_default(field: &Field) -> DiagnosticResult<()> {
+    if let Some((_eq, expr)) = &field.default {
+        error("DST does not support default field values (`field: Type = expr`)").add_help(
+            expr.span(),
+            "write the field in your constructor (e.g. `new`) before `assume_init`",
+        )
+    } else {
+        Ok(())
     }
 }
 
@@ -191,10 +202,7 @@ impl DstStruct {
                 .add_help(name.span(), "add #[repr(C)] above this");
         };
 
-        let tail = fields
-            .pop()
-            .or_error("DST requires at least one field (an unsized slice tail)")
-            .add_help(name.span(), "add a final field like `DevicePath: [u16]`")?;
+        let tail = fields.pop().expect("at least one field");
         let tail_elem = match &tail.ty {
             Type::Slice(slice) => *slice.elem.clone(),
             _ => return error(
@@ -202,13 +210,7 @@ impl DstStruct {
             )
             .add_help(tail.ty.span(), "this field is sized"),
         };
-        if let Some((_eq, expr)) = &tail.default {
-            return error("DST does not support default field values (`field: Type = expr`)")
-                .add_help(
-                    expr.span(),
-                    "write the field in your constructor (e.g. `new`) before `assume_init`",
-                );
-        };
+        has_no_default(&tail)?;
 
         let mut mirror_tail = tail.clone();
         mirror_tail.ty = parse_quote!([::core::mem::MaybeUninit<#tail_elem>]);
@@ -237,13 +239,7 @@ impl DstStruct {
                 }
                 _ => {}
             }
-            if let Some((_eq, expr)) = &field.default {
-                return error("DST does not support default field values (`field: Type = expr`)")
-                    .add_help(
-                        expr.span(),
-                        "write the field in your constructor (e.g. `new`) before `assume_init`",
-                    );
-            };
+            has_no_default(field)?;
         }
 
         let mut mirror_head = fields.clone();
