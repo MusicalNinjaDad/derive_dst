@@ -156,6 +156,45 @@ pub(crate) struct DstStruct {
     count_ty: Type,
 }
 
+fn repr_c(attr: &&Attribute) -> bool {
+    if let Meta::List(meta_list) = &attr.meta
+        && meta_list.path.is_ident("repr")
+    {
+        meta_list
+            .parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)
+            .is_ok_and(|args| {
+                args.iter()
+                    .any(|meta| matches!(meta, Meta::Path(path) if path.is_ident("C")))
+            })
+    } else {
+        false
+    }
+}
+
+fn remove_doc_and_derive(attrs: &mut Vec<Attribute>) {
+    attrs.retain_mut(|attr| keep(&mut attr.meta))
+}
+
+fn keep(meta: &mut Meta) -> bool {
+    if let Meta::List(meta_list) = meta
+        && meta_list.path.is_ident("cfg_attr")
+    {
+        let mut p = meta_list
+            .parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)
+            .expect("cfg_attr takes comma separated list");
+        p.retain(keep);
+        if p.len() < 2 {
+            // We stripped all the attributes and just have the condition left
+            false
+        } else {
+            meta_list.tokens = p.into_token_stream();
+            true
+        }
+    } else {
+        !(meta.path().is_ident("derive") || meta.path().is_ident("doc"))
+    }
+}
+
 fn parse_struct(
     data: Data,
     name: &Ident,
@@ -572,45 +611,6 @@ impl DstStruct {
                 }
             }
         }
-    }
-}
-
-fn keep(meta: &mut Meta) -> bool {
-    if let Meta::List(meta_list) = meta
-        && meta_list.path.is_ident("cfg_attr")
-    {
-        let mut p = meta_list
-            .parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)
-            .expect("cfg_attr takes comma separated list");
-        p.retain(keep);
-        if p.len() < 2 {
-            // We stripped all the attributes and just have the condition left
-            false
-        } else {
-            meta_list.tokens = p.into_token_stream();
-            true
-        }
-    } else {
-        !(meta.path().is_ident("derive") || meta.path().is_ident("doc"))
-    }
-}
-
-fn remove_doc_and_derive(attrs: &mut Vec<Attribute>) {
-    attrs.retain_mut(|attr| keep(&mut attr.meta))
-}
-
-fn repr_c(attr: &&Attribute) -> bool {
-    if let Meta::List(meta_list) = &attr.meta
-        && meta_list.path.is_ident("repr")
-    {
-        meta_list
-            .parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)
-            .is_ok_and(|args| {
-                args.iter()
-                    .any(|meta| matches!(meta, Meta::Path(path) if path.is_ident("C")))
-            })
-    } else {
-        false
     }
 }
 
