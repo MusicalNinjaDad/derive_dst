@@ -152,62 +152,6 @@ pub(crate) struct DstStruct {
     tail_elem: Type,
 }
 
-/// Attributes that are **not** copied onto the generated `Uninit` mirror struct or its fields:
-/// - `derive` — the mirror gets its own fixed `#[derive(Debug)]`, and its fields are
-///   `MaybeUninit<_>`, so the original's derives would not apply to it anyway;
-/// - `doc` — the mirror gets its own generated documentation.
-///
-/// Everything else is mirrored: `repr` (including the required `repr(C)`, plus e.g. `align` /
-/// `packed`, which the mirror needs for an identical layout), lint levels (`allow` / `warn` /
-/// `deny` / `expect` / `forbid`), `cfg` / `cfg_attr` gates, `non_exhaustive`, `deprecated`, ...
-fn is_excluded_meta(meta: &Meta) -> bool {
-    meta.path().is_ident("derive") || meta.path().is_ident("doc")
-}
-
-/// The `Meta` to copy onto the mirror, or `None` to drop it. Everything is copied **verbatim** —
-/// no attribute is ever synthesized or rewritten (so restriction lints such as
-/// `deny(allow_attributes)` / `deny(expect_attributes)` cannot fire on generated code; the only
-/// attributes the macro itself emits on the mirror are `#[doc]` and `#[derive(Debug)]`): only
-/// `derive` and `doc` are dropped. `cfg_attr` is rebuilt recursively without the excluded
-/// attributes, so e.g. `#[cfg_attr(feature = "serde", derive(Serialize))]` does not leak a
-/// `derive` onto the mirror; a `cfg_attr` left with no attributes at all is dropped entirely.
-fn copyable_meta(meta: &Meta) -> Option<Meta> {
-    if is_excluded_meta(meta) {
-        return None;
-    }
-    if let Meta::List(list) = meta
-        && list.path.is_ident("cfg_attr")
-    {
-        let args = list
-            .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
-            .ok()?;
-        let mut args = args.into_iter();
-        // `cfg_attr(condition, attr, ...)`: keep the condition, filter the attributes
-        let condition = args.next()?;
-        let kept: Vec<Meta> = args.filter_map(|meta| copyable_meta(&meta)).collect();
-        return if kept.is_empty() {
-            None
-        } else {
-            Some(syn::parse_quote! { cfg_attr(#condition, #(#kept),*) })
-        };
-    }
-    Some(meta.clone())
-}
-
-/// [`copyable_meta`] for a whole `#[...]` attribute (keeping its outer style and span).
-fn copyable_attr(attr: &Attribute) -> Option<Attribute> {
-    Some(Attribute {
-        meta: copyable_meta(&attr.meta)?,
-        ..attr.clone()
-    })
-}
-
-/// The attributes to place on a mirrored field, so lints & `cfg` gates apply to the mirror
-/// exactly as to the original field.
-fn mirrored_field_attrs(field: &Field) -> Vec<Attribute> {
-    field.attrs.iter().filter_map(copyable_attr).collect()
-}
-
 /// Whether `meta` is a `cfg` gate (`cfg`/`cfg_attr` of cfg gates only) — the only attributes
 /// that are both meaningful and stable on the generated per-field *statements* (lint attributes
 /// on expression statements are experimental, and the mirror field already carries them).
@@ -356,14 +300,9 @@ impl DstStruct {
         let uninit = format_ident!("Uninit{}", name);
         let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-        let elem = tail_elem;
-        // All attributes of the original struct — `repr` (the required `repr(C)` plus any
-        // `align` / `packed`), lint levels, `cfg` / `cfg_attr` gates, ... — are mirrored onto
-        // the `Uninit` struct verbatim, except `derive` & `doc` (see `copyable_meta`).
-        let struct_attrs = attrs;
         // Each sized head field, mirrored with its own attributes onto the `Uninit` field.
         let uninit_head_fields = head.iter().map(|field| {
-            let attrs = mirrored_field_attrs(field);
+            let attrs = &field.attrs;
             let ident = field.ident.as_ref().expect("named fields");
             let ty = &field.ty;
             quote! { #(#attrs)* #ident: ::core::mem::MaybeUninit<#ty>, }
@@ -371,7 +310,7 @@ impl DstStruct {
         let tail_ident = tail.ident.as_ref().expect("named fields");
         let tail_attrs = tail.attrs;
         let uninit_tail_field =
-            quote! { #(#tail_attrs)* #tail_ident: [::core::mem::MaybeUninit<#elem>], };
+            quote! { #(#tail_attrs)* #tail_ident: [::core::mem::MaybeUninit<#tail_elem>], };
         // one `layout_header` extend per sized head field, carrying that field's `cfg` gates
         // (so a `#[cfg]`-gated field is skipped here too, exactly as in the structs)
         let header_extends = head.iter().map(|field| {
@@ -385,7 +324,7 @@ impl DstStruct {
         // The tail slice's pointer-metadata type: the type used for the tail element count
         // throughout the generated signatures & returns (`usize` for `[T]`, but spelled via
         // `Pointee` so the signatures mirror the fat pointer's metadata).
-        let count_ty = quote! { <[#elem] as ::core::ptr::Pointee>::Metadata };
+        let count_ty = quote! { <[#tail_elem] as ::core::ptr::Pointee>::Metadata };
         // Both generated impl headers carry the same explicit bounds, in a single place each:
         // - `[#elem]: Pointee<Metadata = usize>` pins the tail slice's fat-pointer metadata to
         //   `usize`, so the count type in the signatures is known to be `usize` *by the bound*
@@ -402,15 +341,15 @@ impl DstStruct {
         };
         impl_where
             .predicates
-            .push(syn::parse_quote! { [#elem]: ::core::ptr::Pointee<Metadata = usize> });
+            .push(syn::parse_quote! { [#tail_elem]: ::core::ptr::Pointee<Metadata = usize> });
         impl_where
             .predicates
-            .push(syn::parse_quote! { #elem: ::core::marker::Sized });
+            .push(syn::parse_quote! { #tail_elem: ::core::marker::Sized });
 
         quote! {
             // the original struct's attributes (incl. `repr(C)` — required by `parse`), except
             // `derive` & `doc`; the generated docs & `#[derive(Debug)]` below are the mirror's own
-            #(#struct_attrs)*
+            #(#attrs)*
             #[doc = concat!("`MaybeUninit` mirror of [`", stringify!(#name), "}`]: identical `repr(C)` layout, but every field is")]
             #[doc = "wrapped in `MaybeUninit`, so any bit pattern — including a fresh, uninitialised"]
             #[doc = "allocation — is a valid value. Constructed by `new_uninit_for_size` /"]
@@ -508,7 +447,7 @@ impl DstStruct {
                 #[doc = "The internal `unsafe` block is sound: `raw` was allocated by `Global` with the"]
                 #[doc = "given `layout`, so it is valid for reads & writes of that layout; `count` is the"]
                 #[doc = "number of tail elements that layout was built for, so `ptr::from_raw_parts_mut`"]
-                #[doc = concat!("attaches the correct metadata for the mirror (last field: `[MaybeUninit<", stringify!(#elem), ">]`).")]
+                #[doc = concat!("attaches the correct metadata for the mirror (last field: `[MaybeUninit<", stringify!(#tail_elem), ">]`).")]
                 #[doc = "Every field of the mirror is `MaybeUninit<_>`, which is valid for ANY bit pattern,"]
                 #[doc = "so the uninitialised allocation is a valid pointee; the pointer is moved into"]
                 #[doc = "exactly one `Box` and not used afterwards."]
@@ -573,7 +512,7 @@ impl DstStruct {
                 > {
                     let header = Self::layout_header()?;
 
-                    let elem_size = ::core::mem::size_of::<#elem>();
+                    let elem_size = ::core::mem::size_of::<#tail_elem>();
                     // named fns only (no `/`): a size smaller than the head saturates to an empty
                     // tail; the caller validates the result by comparing `layout.size()` with the
                     // requested `size`
@@ -633,7 +572,7 @@ impl DstStruct {
                     (::core::alloc::Layout, usize, #count_ty),
                     ::core::alloc::LayoutError,
                 > {
-                    let tail = ::core::alloc::Layout::array::<#elem>(count)?;
+                    let tail = ::core::alloc::Layout::array::<#tail_elem>(count)?;
                     let (extended, offset) = header.extend(tail)?;
                     ::core::result::Result::Ok((extended.pad_to_align(), offset, count))
                 }
