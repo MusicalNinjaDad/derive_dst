@@ -268,27 +268,14 @@ impl DstStruct {
                     .add_help(union_data.union_token.span(), "not a struct");
             }
         };
-        
+
         // repr(C) is required so the generated layout matches a C structand can be generated with
         // Layout::extend
-        let has_repr_c = ast.attrs.iter().any(|attr| {
-            if !attr.meta.path().is_ident("repr") {
-                return false;
-            }
-            match &attr.meta {
-                Meta::List(list) => list
-                    .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
-                    .is_ok_and(|args| {
-                        args.iter()
-                            .any(|meta| matches!(meta, Meta::Path(path) if path.is_ident("C")))
-                    }),
-                _ => false,
-            }
-        });
-        if !has_repr_c {
+        ast.attrs.retain_mut(|attr| keep(attr).is_some());
+        if ast.attrs.iter().find(repr_c).is_none() {
             return error("DST requires #[repr(C)] so the generated layout matches a C struct")
                 .add_help(name.span(), "add #[repr(C)] above this");
-        }
+        };
 
         let mut tail = fields
             .pop()
@@ -342,8 +329,6 @@ impl DstStruct {
             };
             field.attrs.retain_mut(|attr| keep(attr).is_some());
         }
-
-        ast.attrs.retain_mut(|attr| keep(attr).is_some());
 
         Ok(Self {
             name,
@@ -708,6 +693,21 @@ fn keep(attr: &mut Attribute) -> Option<&mut Attribute> {
             }
             Some(attr)
         })
+}
+
+fn repr_c(attr: &&Attribute) -> bool {
+    if let Meta::List(meta_list) = &attr.meta
+        && meta_list.path.is_ident("repr")
+    {
+        meta_list
+            .parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)
+            .is_ok_and(|args| {
+                args.iter()
+                    .any(|meta| matches!(meta, Meta::Path(path) if path.is_ident("C")))
+            })
+    } else {
+        false
+    }
 }
 
 #[cfg(test)]
