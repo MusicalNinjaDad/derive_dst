@@ -244,9 +244,21 @@ impl DstStruct {
     pub(crate) fn parse(mut ast: DeriveInput) -> DiagnosticResult<Self> {
         let name = ast.ident;
 
-        // Fail fast: must be a struct with named fields
-        let struct_data = match ast.data {
-            Data::Struct(struct_data) => struct_data,
+        let mut fields = match ast.data {
+            Data::Struct(struct_data) => match struct_data.fields {
+                Fields::Named(fields) => fields.named,
+                Fields::Unnamed(fields) => {
+                    return error("DST can only be derived for a struct with named fields")
+                        .add_help(
+                            fields.paren_token.span.span(),
+                            "tuple structs are not supported",
+                        );
+                }
+                Fields::Unit => {
+                    return error("DST can only be derived for a struct with named fields")
+                        .add_help(name.span(), "unit structs have no fields");
+                }
+            },
             Data::Enum(enum_data) => {
                 return error("DST can only be derived for a struct")
                     .add_help(enum_data.enum_token.span(), "not a struct");
@@ -256,20 +268,7 @@ impl DstStruct {
                     .add_help(union_data.union_token.span(), "not a struct");
             }
         };
-        let mut fields = match struct_data.fields {
-            Fields::Named(fields) => fields.named,
-            Fields::Unnamed(fields) => {
-                return error("DST can only be derived for a struct with named fields").add_help(
-                    fields.paren_token.span.span(),
-                    "tuple structs are not supported",
-                );
-            }
-            Fields::Unit => {
-                return error("DST can only be derived for a struct with named fields")
-                    .add_help(name.span(), "unit structs have no fields");
-            }
-        };
-
+        
         // repr(C) is required so the generated layout matches a C structand can be generated with
         // Layout::extend
         let has_repr_c = ast.attrs.iter().any(|attr| {
