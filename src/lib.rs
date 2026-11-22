@@ -108,7 +108,7 @@
 //! `Layout` carries the valid size, so the caller can detect and handle the mismatch itself.
 
 use proc_macro::TokenStream as TokenStream1;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Delimiter::Parenthesis, TokenStream as TokenStream2};
 use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
 use quote::{format_ident, quote};
 use syn::{
@@ -681,7 +681,18 @@ fn keep(attr: &mut Attribute) -> Option<&mut Attribute> {
         .then_some(attr)
         .map(|attr| {
             match &attr.meta {
-                Meta::List(meta_list) if meta_list.path.is_ident("cfg_attr") => todo!(),
+                Meta::List(meta_list) if meta_list.path.is_ident("cfg_attr") => {
+                    let mut p: Punctuated<Meta, Token![,]> = meta_list
+                        .parse_args_with(Punctuated::parse_separated_nonempty)
+                        .unwrap();
+                    p.retain(|meta| {
+                        dbg!(&meta.path());
+                        dbg!(meta.path().is_ident("derive"));
+                        !meta.path().is_ident("derive")
+                    });
+                    dbg!(p);
+                    attr
+                }
                 _ => attr,
             }
             // if attr.path().is_ident("cfg_attr") {
