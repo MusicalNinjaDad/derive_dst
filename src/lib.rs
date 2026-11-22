@@ -271,10 +271,8 @@ impl DstStruct {
 
         remove_doc_and_derive(&mut ast.attrs);
 
-        // repr(C) is required so the generated layout matches a C structand can be generated with
-        // Layout::extend
         if ast.attrs.iter().find(repr_c).is_none() {
-            return error("DST requires #[repr(C)] so the generated layout matches a C struct")
+            return error("DST requires #[repr(C)] so the layout can be generated for allocation")
                 .add_help(name.span(), "add #[repr(C)] above this");
         };
 

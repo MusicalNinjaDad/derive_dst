@@ -1,4 +1,4 @@
-error: DST requires #[repr(C)] so the generated layout matches a C struct
+error: DST requires #[repr(C)] so the layout can be generated for allocation
  --> tests/compilation/fail_NoReprC.rs:6:10
   |
 6 | #[derive(DST)]
