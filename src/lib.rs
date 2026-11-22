@@ -687,11 +687,12 @@ fn keep(attr: &mut Attribute) -> Option<&mut Attribute> {
             if let Meta::List(meta_list) = &mut attr.meta
                 && meta_list.path.is_ident("cfg_attr")
             {
-                let mut p: Punctuated<Meta, Token![,]> = meta_list
-                    .parse_args_with(Punctuated::parse_separated_nonempty)
-                    .unwrap();
+                let mut p = meta_list
+                    .parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)
+                    .expect("cfg_attr takes comma separated list");
                 p.retain(is_wanted);
                 if p.len() < 2 {
+                    // We stripped all the attributes and just have the condition left
                     return None;
                 }
                 meta_list.tokens = p.into_token_stream();
@@ -719,7 +720,8 @@ mod tests {
 
     #[test]
     fn remove_derive_from_cfg_attr() {
-        let mut foo: Attribute = parse_quote! {#[cfg_attr(test, derive(Debug), deprecated, doc = "foo")]};
+        let mut foo: Attribute =
+            parse_quote! {#[cfg_attr(test, derive(Debug), deprecated, doc = "foo")]};
         let mut expected: Attribute = parse_quote! {#[cfg_attr(test, deprecated)]};
         assert_eq!(keep(&mut foo), Some(&mut expected));
     }
