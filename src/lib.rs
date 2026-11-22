@@ -685,31 +685,12 @@ fn keep(attr: &mut Attribute) -> Option<&mut Attribute> {
                     let mut p: Punctuated<Meta, Token![,]> = meta_list
                         .parse_args_with(Punctuated::parse_separated_nonempty)
                         .unwrap();
-                    p.retain(|meta| {
-                        dbg!(&meta.path());
-                        dbg!(meta.path().is_ident("derive"));
-                        !meta.path().is_ident("derive")
-                    });
-                    dbg!(&p);
+                    p.retain(|meta| !meta.path().is_ident("derive"));
                     meta_list.tokens = p.into_token_stream();
                     attr
                 }
                 _ => attr,
             }
-            // if attr.path().is_ident("cfg_attr") {
-            //     dbg!(&attr);
-            //     let mut content;
-            //     attr.parse_nested_meta(|pnm| {
-            //         parenthesized!(content in pnm.input);
-            //         content
-            //             .parse_terminated(Meta::parse, Token![,])
-            //             .expect("valid cfg_attr")
-            //             .retain(|meta| !meta.path().is_ident("derive"));
-            //         Result::Ok(())
-            //     });
-            //     dbg!(&attr);
-            // }
-            // attr
         })
 }
 
