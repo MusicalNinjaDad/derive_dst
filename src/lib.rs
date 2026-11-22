@@ -139,23 +139,29 @@ fn impl_dst(input: TokenStream2) -> DiagnosticStream {
 #[derive(Debug)]
 pub(crate) struct DstStruct {
     name: Ident,
+    mirror_name: Ident,
     generics: Generics,
-    /// All attributes of the original struct (`repr`, lints, `cfg` gates, ...); mirrored onto
-    /// the generated `Uninit` struct except `derive` & `doc` (see [`copyable_attr`]).
+    /// Attributes after stripping doc & derive
     attrs: Vec<Attribute>,
-    /// The sized "head" fields (all but the last). Default field values (`= expr`) are not
-    /// supported — the mirror could not carry them — so the caller's constructor writes them.
+    /// The sized "head" fields (all but the last).
     head: Punctuated<Field, Token![,]>,
+    /// MaybeUninit versions of the head fields
+    mirror_head: Punctuated<Field, Token![,]>,
     /// The last field, of type `[T]`.
     tail: Field,
+    /// MaybeUninit version of the tail field
+    mirror_tail: Field,
     /// `T` in the tail `[T]`.
     tail_elem: Type,
+    /// `<T as Pointee>::Metadata`
+    count_ty: Type,
 }
 
 impl DstStruct {
     /// Handles all the invariant validation.
     pub(crate) fn parse(mut ast: DeriveInput) -> DiagnosticResult<Self> {
         let name = ast.ident;
+        let mirror_name = format_ident!("Uninit{}", name);
 
         let mut fields = match ast.data {
             Data::Struct(struct_data) => match struct_data.fields {
@@ -189,7 +195,7 @@ impl DstStruct {
                 .add_help(name.span(), "add #[repr(C)] above this");
         };
 
-        let mut tail = fields
+        let tail = fields
             .pop()
             .or_error("DST requires at least one field (an unsized slice tail)")
             .add_help(name.span(), "add a final field like `DevicePath: [u16]`")?;
@@ -207,9 +213,11 @@ impl DstStruct {
                     "write the field in your constructor (e.g. `new`) before `assume_init`",
                 );
         };
-        tail.ty = parse_quote!([::core::mem::MaybeUninit<#tail_elem>]);
 
-        remove_doc_and_derive(&mut tail.attrs);
+        let mut mirror_tail = tail.clone();
+        mirror_tail.ty = parse_quote!([::core::mem::MaybeUninit<#tail_elem>]);
+
+        let count_ty = parse_quote!(<[#tail_elem] as ::core::ptr::Pointee>::Metadata);
 
         for field in fields.iter_mut() {
             match &field.ty {
@@ -231,10 +239,7 @@ impl DstStruct {
                         "deriving DSTs with `str` as a tail is not supported",
                     );
                 }
-                _ => {
-                    let ty = field.ty.clone();
-                    field.ty = parse_quote!(::core::mem::MaybeUninit<#ty>);
-                }
+                _ => {}
             }
             if let Some((_eq, expr)) = &field.default {
                 return error("DST does not support default field values (`field: Type = expr`)")
@@ -246,13 +251,23 @@ impl DstStruct {
             remove_doc_and_derive(&mut field.attrs);
         }
 
+        let mut mirror_head = fields.clone();
+        for field in mirror_head.iter_mut() {
+            let ty = field.ty.clone();
+            field.ty = parse_quote!(::core::mem::MaybeUninit<#ty>)
+        }
+
         Ok(Self {
             name,
+            mirror_name,
             generics: ast.generics,
             attrs: ast.attrs,
             head: fields,
+            mirror_head,
             tail,
+            mirror_tail,
             tail_elem,
+            count_ty,
         })
     }
 
@@ -269,10 +284,10 @@ impl DstStruct {
             head,
             tail,
             tail_elem,
+            count_ty,
         } = self;
 
         let uninit = format_ident!("Uninit{}", name);
-        let uninit_head_fields = head.pairs();
 
         // one `layout_header` extend per sized head field, carrying that field's `cfg` gates
         // (so a `#[cfg]`-gated field is skipped here too, exactly as in the structs)
