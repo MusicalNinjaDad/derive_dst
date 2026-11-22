@@ -152,37 +152,6 @@ pub(crate) struct DstStruct {
     tail_elem: Type,
 }
 
-/// Whether `meta` is a `cfg` gate (`cfg`/`cfg_attr` of cfg gates only) — the only attributes
-/// that are both meaningful and stable on the generated per-field *statements* (lint attributes
-/// on expression statements are experimental, and the mirror field already carries them).
-fn is_cfg_gate_meta(meta: &Meta) -> bool {
-    if meta.path().is_ident("cfg") {
-        return true;
-    }
-    if let Meta::List(list) = meta
-        && list.path.is_ident("cfg_attr")
-        && let ::core::result::Result::Ok(args) =
-            list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
-    {
-        let mut args = args.into_iter();
-        let _condition = args.next();
-        let rest: Vec<Meta> = args.collect();
-        return !rest.is_empty() && rest.iter().all(is_cfg_gate_meta);
-    }
-    false
-}
-
-/// The `cfg` gates of a field, repeated on the generated statements that touch that field, so a
-/// cfg'd-out field is skipped there too — exactly as in the original struct and the mirror.
-fn field_cfg_gates(field: &Field) -> Vec<Attribute> {
-    field
-        .attrs
-        .iter()
-        .filter(|attr| is_cfg_gate_meta(&attr.meta))
-        .cloned()
-        .collect()
-}
-
 impl DstStruct {
     /// Handles all the invariant validation.
     pub(crate) fn parse(mut ast: DeriveInput) -> DiagnosticResult<Self> {
@@ -308,17 +277,22 @@ impl DstStruct {
         // one `layout_header` extend per sized head field, carrying that field's `cfg` gates
         // (so a `#[cfg]`-gated field is skipped here too, exactly as in the structs)
         let header_extends = head.iter().map(|field| {
-            let gates = field_cfg_gates(field);
+            let gates = field
+                .attrs
+                .iter()
+                .filter(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"));
             let ty = &field.ty;
             quote! {
                 #(#gates)*
                 prefix = prefix.extend(::core::alloc::Layout::new::<#ty>())?.0;
             }
         });
+
         // The tail slice's pointer-metadata type: the type used for the tail element count
         // throughout the generated signatures & returns (`usize` for `[T]`, but spelled via
         // `Pointee` so the signatures mirror the fat pointer's metadata).
         let count_ty = quote! { <[#tail_elem] as ::core::ptr::Pointee>::Metadata };
+        
         // Both generated impl headers carry the same explicit bounds, in a single place each:
         // - `[#elem]: Pointee<Metadata = usize>` pins the tail slice's fat-pointer metadata to
         //   `usize`, so the count type in the signatures is known to be `usize` *by the bound*
