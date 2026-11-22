@@ -676,8 +676,12 @@ impl<'ast> DstStruct<'ast> {
     }
 }
 
+fn is_wanted(meta: &mut Meta) -> bool {
+    !(meta.path().is_ident("derive") || meta.path().is_ident("doc"))
+}
+
 fn keep(attr: &mut Attribute) -> Option<&mut Attribute> {
-    (!(attr.path().is_ident("derive") || attr.path().is_ident("doc")))
+    (is_wanted(&mut attr.meta))
         .then_some(attr)
         .map(|attr| {
             if let Meta::List(meta_list) = &mut attr.meta
@@ -686,7 +690,7 @@ fn keep(attr: &mut Attribute) -> Option<&mut Attribute> {
                 let mut p: Punctuated<Meta, Token![,]> = meta_list
                     .parse_args_with(Punctuated::parse_separated_nonempty)
                     .unwrap();
-                p.retain(|meta| !meta.path().is_ident("derive"));
+                p.retain(is_wanted);
                 meta_list.tokens = p.into_token_stream();
             }
             attr
