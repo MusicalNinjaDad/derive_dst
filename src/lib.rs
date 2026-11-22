@@ -683,7 +683,7 @@ fn is_wanted(meta: &mut Meta) -> bool {
 fn keep(attr: &mut Attribute) -> Option<&mut Attribute> {
     (is_wanted(&mut attr.meta))
         .then_some(attr)
-        .map(|attr| {
+        .and_then(|attr| {
             if let Meta::List(meta_list) = &mut attr.meta
                 && meta_list.path.is_ident("cfg_attr")
             {
@@ -691,9 +691,12 @@ fn keep(attr: &mut Attribute) -> Option<&mut Attribute> {
                     .parse_args_with(Punctuated::parse_separated_nonempty)
                     .unwrap();
                 p.retain(is_wanted);
+                if p.len() < 2 {
+                    return None;
+                }
                 meta_list.tokens = p.into_token_stream();
             }
-            attr
+            Some(attr)
         })
 }
 
