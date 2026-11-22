@@ -147,8 +147,6 @@ pub(crate) struct DstStruct {
     head: Punctuated<Field, Token![,]>,
     /// MaybeUninit versions of the head fields
     mirror_head: Punctuated<Field, Token![,]>,
-    /// The last field, of type `[T]`.
-    tail: Field,
     /// MaybeUninit version of the tail field
     mirror_tail: Field,
     /// `T` in the tail `[T]`.
@@ -264,7 +262,6 @@ impl DstStruct {
             attrs: ast.attrs,
             head: fields,
             mirror_head,
-            tail,
             mirror_tail,
             tail_elem,
             count_ty,
@@ -284,7 +281,6 @@ impl DstStruct {
             attrs,
             head,
             mirror_head,
-            tail,
             mirror_tail,
             tail_elem,
             count_ty,
