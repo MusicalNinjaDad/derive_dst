@@ -269,9 +269,10 @@ impl DstStruct {
             }
         };
 
+        remove_doc_and_derive(&mut ast.attrs);
+
         // repr(C) is required so the generated layout matches a C structand can be generated with
         // Layout::extend
-        ast.attrs.retain_mut(|attr| keep(attr).is_some());
         if ast.attrs.iter().find(repr_c).is_none() {
             return error("DST requires #[repr(C)] so the generated layout matches a C struct")
                 .add_help(name.span(), "add #[repr(C)] above this");
@@ -296,7 +297,7 @@ impl DstStruct {
                 );
         };
 
-        tail.attrs.retain_mut(|attr| keep(attr).is_some());
+        remove_doc_and_derive(&mut tail.attrs);
 
         for field in fields.iter_mut() {
             match &field.ty {
@@ -327,7 +328,7 @@ impl DstStruct {
                         "write the field in your constructor (e.g. `new`) before `assume_init`",
                     );
             };
-            field.attrs.retain_mut(|attr| keep(attr).is_some());
+            remove_doc_and_derive(&mut field.attrs);
         }
 
         Ok(Self {
@@ -693,6 +694,10 @@ fn keep(attr: &mut Attribute) -> Option<&mut Attribute> {
             }
             Some(attr)
         })
+}
+
+fn remove_doc_and_derive(attrs: &mut Vec<Attribute>) {
+    attrs.retain_mut(|attr| keep(attr).is_some())
 }
 
 fn repr_c(attr: &&Attribute) -> bool {
