@@ -247,7 +247,6 @@ impl DstStruct {
                         "write the field in your constructor (e.g. `new`) before `assume_init`",
                     );
             };
-            remove_doc_and_derive(&mut field.attrs);
         }
 
         let mut mirror_head = fields.clone();
@@ -276,7 +275,6 @@ impl DstStruct {
             Some(where_clause) => where_clause,
             None => ast.generics.make_where_clause(),
         };
-
         where_clause
             .predicates
             .push(parse_quote!(#tail_elem: ::core::marker::Sized));
