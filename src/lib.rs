@@ -112,7 +112,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
 use quote::{ToTokens as _, format_ident, quote};
 use syn::{
-    Attribute, Data, DeriveInput, Field, Fields, Generics, Ident, Meta, Token, Type,
+    Attribute, Data, DeriveInput, Field, Fields, Generics, Ident, Meta, Token, Type, parse_quote,
     punctuated::Punctuated, spanned::Spanned,
 };
 
@@ -238,6 +238,7 @@ impl DstStruct {
                     "write the field in your constructor (e.g. `new`) before `assume_init`",
                 );
         };
+        tail.ty = parse_quote!([::core::mem::MaybeUninit<#tail_elem>]);
 
         remove_doc_and_derive(&mut tail.attrs);
 
@@ -261,7 +262,10 @@ impl DstStruct {
                         "deriving DSTs with `str` as a tail is not supported",
                     );
                 }
-                _ => {}
+                _ => {
+                    let ty = field.ty.clone();
+                    field.ty = parse_quote!(::core::mem::MaybeUninit<#ty>);
+                }
             }
             if let Some((_eq, expr)) = &field.default {
                 return error("DST does not support default field values (`field: Type = expr`)")
@@ -301,16 +305,8 @@ impl DstStruct {
         let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
         // Each sized head field, mirrored with its own attributes onto the `Uninit` field.
-        let uninit_head_fields = head.iter().map(|field| {
-            let attrs = &field.attrs;
-            let ident = field.ident.as_ref().expect("named fields");
-            let ty = &field.ty;
-            quote! { #(#attrs)* #ident: ::core::mem::MaybeUninit<#ty>, }
-        });
-        let tail_ident = tail.ident.as_ref().expect("named fields");
-        let tail_attrs = tail.attrs;
-        let uninit_tail_field =
-            quote! { #(#tail_attrs)* #tail_ident: [::core::mem::MaybeUninit<#tail_elem>], };
+        let uninit_head_fields = head.iter();
+        let uninit_tail_field = tail;
         // one `layout_header` extend per sized head field, carrying that field's `cfg` gates
         // (so a `#[cfg]`-gated field is skipped here too, exactly as in the structs)
         let header_extends = head.iter().map(|field| {
@@ -357,7 +353,7 @@ impl DstStruct {
             #[doc = "[`Self::assume_init`]."]
             #[derive(Debug)]
             struct #uninit #generics #where_clause {
-                #(#uninit_head_fields)*
+                #(#uninit_head_fields),*,
                 #uninit_tail_field
             }
 
@@ -697,7 +693,10 @@ mod tests {
         };
         let device_info = DstStruct::parse(input).unwrap();
         assert_eq!(device_info.name, format_ident!("DeviceDetails"));
-        assert_eq!(device_info.tail, parse_quote!(DevicePath: [u16]));
+        assert_eq!(
+            device_info.tail,
+            parse_quote!(DevicePath: [::core::mem::MaybeUninit<u16>])
+        );
         assert_eq!(device_info.tail_elem, parse_quote!(u16));
     }
 }
