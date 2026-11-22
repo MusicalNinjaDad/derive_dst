@@ -720,4 +720,10 @@ mod tests {
         let mut expected: Attribute = parse_quote! {#[cfg_attr(test, deprecated)]};
         assert_eq!(keep(&mut foo), Some(&mut expected));
     }
+
+    #[test]
+    fn remove_empty_cfg_attr() {
+        let mut foo: Attribute = parse_quote! {#[cfg_attr(test, derive(Debug), doc = "foo")]};
+        assert_eq!(keep(&mut foo), None);
+    }
 }
