@@ -324,31 +324,37 @@ impl DstStruct {
     /// — and the `new_uninit_for_size` / `new_uninit_for_count` / `assume_init` /
     /// `layout_for_size` / `layout_for_count` methods (all returning `core::alloc::LayoutError`
     /// on failure).
-    pub(crate) fn generate(&self) -> TokenStream2 {
-        let name = self.name;
+    pub(crate) fn generate(self) -> TokenStream2 {
+        let DstStruct {
+            name,
+            generics,
+            attrs,
+            head,
+            tail,
+            tail_elem,
+        } = self;
         let uninit = format_ident!("Uninit{}", name);
-        let generics = self.generics;
-        let (impl_generics, ty_generics, where_clause) = self.generics.split_for_impl();
+        let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-        let elem = self.tail_elem;
+        let elem = tail_elem;
         // All attributes of the original struct — `repr` (the required `repr(C)` plus any
         // `align` / `packed`), lint levels, `cfg` / `cfg_attr` gates, ... — are mirrored onto
         // the `Uninit` struct verbatim, except `derive` & `doc` (see `copyable_meta`).
-        let struct_attrs: Vec<Attribute> = self.attrs.iter().filter_map(copyable_attr).collect();
+        let struct_attrs = attrs;
         // Each sized head field, mirrored with its own attributes onto the `Uninit` field.
-        let uninit_head_fields = self.head.iter().map(|field| {
+        let uninit_head_fields = head.iter().map(|field| {
             let attrs = mirrored_field_attrs(field);
             let ident = field.ident.as_ref().expect("named fields");
             let ty = &field.ty;
             quote! { #(#attrs)* #ident: ::core::mem::MaybeUninit<#ty>, }
         });
-        let tail_ident = self.tail.ident.as_ref().expect("named fields");
-        let tail_attrs = mirrored_field_attrs(self.tail);
+        let tail_ident = tail.ident.as_ref().expect("named fields");
+        let tail_attrs = tail.attrs;
         let uninit_tail_field =
             quote! { #(#tail_attrs)* #tail_ident: [::core::mem::MaybeUninit<#elem>], };
         // one `layout_header` extend per sized head field, carrying that field's `cfg` gates
         // (so a `#[cfg]`-gated field is skipped here too, exactly as in the structs)
-        let header_extends = self.head.iter().map(|field| {
+        let header_extends = head.iter().map(|field| {
             let gates = field_cfg_gates(field);
             let ty = &field.ty;
             quote! {
@@ -367,7 +373,7 @@ impl DstStruct {
         //   `new_uninit_for` / `assume_init` relies on when attaching/carrying the metadata;
         // - `#elem: Sized` makes `size_of::<#elem>()` / `Layout::array::<#elem>()` well-defined
         //   (ZST elements like `()` are fine — they just make the element size 0).
-        let mut impl_where: syn::WhereClause = match &self.generics.where_clause {
+        let mut impl_where: syn::WhereClause = match &generics.where_clause {
             Some(where_clause) => where_clause.clone(),
             None => syn::WhereClause {
                 where_token: Default::default(),
@@ -701,7 +707,7 @@ mod tests {
 
     #[test]
     fn parse_cstruct() {
-        let mut input: DeriveInput = parse_quote! {
+        let input: DeriveInput = parse_quote! {
             #[repr(C)]
             #[doc(ignore)]
             #[derive(Debug, DST)]
@@ -711,9 +717,9 @@ mod tests {
                 DevicePath: [u16]
             }
         };
-        let device_info = DstStruct::parse(&mut input).unwrap();
-        assert_eq!(device_info.name, &format_ident!("DeviceDetails"));
-        assert_eq!(device_info.tail, &parse_quote!(DevicePath: [u16]));
-        assert_eq!(device_info.tail_elem, &parse_quote!(u16));
+        let device_info = DstStruct::parse(input).unwrap();
+        assert_eq!(device_info.name, format_ident!("DeviceDetails"));
+        assert_eq!(device_info.tail, parse_quote!(DevicePath: [u16]));
+        assert_eq!(device_info.tail_elem, parse_quote!(u16));
     }
 }
