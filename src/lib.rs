@@ -128,28 +128,28 @@ pub fn derive_dst(input: TokenStream1) -> TokenStream1 {
 
 /// Parses & validates the input, then generates the impls and error type.
 fn impl_dst(input: TokenStream2) -> DiagnosticStream {
-    let mut ast: DeriveInput = syn::parse2(input).expect("derive macro input");
+    let ast: DeriveInput = syn::parse2(input).expect("derive macro input");
 
-    let dst = DstStruct::parse(&mut ast)?;
+    let dst = DstStruct::parse(ast)?;
 
     Ok(dst.generate())
 }
 
 /// A destructured, validated `#[repr(C)]` struct with named fields and an unsized slice tail.
 #[derive(Debug)]
-pub(crate) struct DstStruct<'ast> {
-    name: &'ast Ident,
-    generics: &'ast Generics,
+pub(crate) struct DstStruct {
+    name: Ident,
+    generics: Generics,
     /// All attributes of the original struct (`repr`, lints, `cfg` gates, ...); mirrored onto
     /// the generated `Uninit` struct except `derive` & `doc` (see [`copyable_attr`]).
-    attrs: &'ast [Attribute],
+    attrs: Vec<Attribute>,
     /// The sized "head" fields (all but the last). Default field values (`= expr`) are not
     /// supported — the mirror could not carry them — so the caller's constructor writes them.
-    head: Vec<&'ast Field>,
+    head: Punctuated<Field, Token![,]>,
     /// The last field, of type `[T]`.
-    tail: &'ast Field,
+    tail: Field,
     /// `T` in the tail `[T]`.
-    tail_elem: &'ast Type,
+    tail_elem: Type,
 }
 
 /// Attributes that are **not** copied onto the generated `Uninit` mirror struct or its fields:
@@ -239,13 +239,13 @@ fn field_cfg_gates(field: &Field) -> Vec<Attribute> {
         .collect()
 }
 
-impl<'ast> DstStruct<'ast> {
+impl DstStruct {
     /// Handles all the invariant validation.
-    pub(crate) fn parse(ast: &'ast mut DeriveInput) -> DiagnosticResult<Self> {
-        let name = &ast.ident;
+    pub(crate) fn parse(mut ast: DeriveInput) -> DiagnosticResult<Self> {
+        let name = ast.ident;
 
         // Fail fast: must be a struct with named fields
-        let struct_data = match &ast.data {
+        let struct_data = match ast.data {
             Data::Struct(struct_data) => struct_data,
             Data::Enum(enum_data) => {
                 return error("DST can only be derived for a struct")
@@ -256,8 +256,8 @@ impl<'ast> DstStruct<'ast> {
                     .add_help(union_data.union_token.span(), "not a struct");
             }
         };
-        let fields = match &struct_data.fields {
-            Fields::Named(fields) => &fields.named,
+        let mut fields = match struct_data.fields {
+            Fields::Named(fields) => fields.named,
             Fields::Unnamed(fields) => {
                 return error("DST can only be derived for a struct with named fields").add_help(
                     fields.paren_token.span.span(),
@@ -291,65 +291,29 @@ impl<'ast> DstStruct<'ast> {
                 .add_help(name.span(), "add #[repr(C)] above this");
         }
 
+        for field in fields.iter_mut() {
+            field.attrs.retain_mut(|attr| keep(attr).is_some());
+        }
+
         let tail = fields
-            .last()
+            .pop()
             .or_error("DST requires at least one field (an unsized slice tail)")
             .add_help(name.span(), "add a final field like `DevicePath: [u16]`")?;
         let tail_elem = match &tail.ty {
-            Type::Slice(slice) => &slice.elem,
+            Type::Slice(slice) => *slice.elem.clone(),
             _ => return error(
                 "the last field of a DST struct must be an unsized slice, e.g. `DevicePath: [u16]`",
             )
             .add_help(tail.ty.span(), "this field is sized"),
         };
 
-        let mut head = Vec::with_capacity(fields.len() - 1);
-        for field in fields.iter().take(fields.len() - 1) {
-            match &field.ty {
-                Type::Slice(slice) => {
-                    return error("only the last field of a DST struct may be unsized").add_help(
-                        slice.bracket_token.span.span(),
-                        "move this slice to the last position, or make it sized e.g. `[u16; 4]`",
-                    );
-                }
-                Type::TraitObject(trait_object) => {
-                    return error("only the last field of a DST struct may be unsized").add_note(
-                        trait_object.span(),
-                        "deriving DSTs with `dyn Trait` as a tail is not supported",
-                    );
-                }
-                Type::Path(path) if path.path.is_ident("str") => {
-                    return error("only the last field of a DST struct may be unsized").add_note(
-                        path.span(),
-                        "deriving DSTs with `str` as a tail is not supported",
-                    );
-                }
-                _ => {}
-            }
-            head.push(field);
-        }
-
-        // Default field values (`field: Type = expr`) are deliberately not part of the API: the
-        // `Uninit` mirror cannot carry them (its fields are `MaybeUninit<T>`), so the caller's
-        // own constructor (e.g. `new`) writes every field before `assume_init`. Checked last so
-        // the structural errors above keep their spans.
-        for field in fields.iter() {
-            if let Some((_eq, expr)) = &field.default {
-                return error("DST does not support default field values (`field: Type = expr`)")
-                    .add_help(
-                        expr.span(),
-                        "write the field in your constructor (e.g. `new`) before `assume_init`",
-                    );
-            }
-        }
-
         ast.attrs.retain_mut(|attr| keep(attr).is_some());
 
         Ok(Self {
             name,
-            generics: &ast.generics,
-            attrs: &ast.attrs,
-            head,
+            generics: ast.generics,
+            attrs: ast.attrs,
+            head: fields,
             tail,
             tail_elem,
         })
