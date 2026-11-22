@@ -304,9 +304,7 @@ impl DstStruct {
         let uninit = format_ident!("Uninit{}", name);
         let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-        // Each sized head field, mirrored with its own attributes onto the `Uninit` field.
         let uninit_head_fields = head.iter();
-        let uninit_tail_field = tail;
         // one `layout_header` extend per sized head field, carrying that field's `cfg` gates
         // (so a `#[cfg]`-gated field is skipped here too, exactly as in the structs)
         let header_extends = head.iter().map(|field| {
@@ -354,7 +352,7 @@ impl DstStruct {
             #[derive(Debug)]
             struct #uninit #generics #where_clause {
                 #(#uninit_head_fields),*,
-                #uninit_tail_field
+                #tail
             }
 
             impl #impl_generics #name #ty_generics #impl_where {
