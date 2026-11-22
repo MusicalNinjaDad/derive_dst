@@ -108,12 +108,12 @@
 //! `Layout` carries the valid size, so the caller can detect and handle the mismatch itself.
 
 use proc_macro::TokenStream as TokenStream1;
-use proc_macro2::{Delimiter::Parenthesis, TokenStream as TokenStream2};
+use proc_macro2::TokenStream as TokenStream2;
 use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
 use quote::{ToTokens as _, format_ident, quote};
 use syn::{
-    Attribute, Data, DeriveInput, Field, Fields, Generics, Ident, Meta, Token, Type, parenthesized,
-    parse::Parse, punctuated::Punctuated, spanned::Spanned,
+    Attribute, Data, DeriveInput, Field, Fields, Generics, Ident, Meta, Token, Type,
+    punctuated::Punctuated, spanned::Spanned,
 };
 
 #[proc_macro_derive(DST)]
