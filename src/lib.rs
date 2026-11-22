@@ -291,11 +291,7 @@ impl DstStruct {
                 .add_help(name.span(), "add #[repr(C)] above this");
         }
 
-        for field in fields.iter_mut() {
-            field.attrs.retain_mut(|attr| keep(attr).is_some());
-        }
-
-        let tail = fields
+        let mut tail = fields
             .pop()
             .or_error("DST requires at least one field (an unsized slice tail)")
             .add_help(name.span(), "add a final field like `DevicePath: [u16]`")?;
@@ -306,6 +302,47 @@ impl DstStruct {
             )
             .add_help(tail.ty.span(), "this field is sized"),
         };
+        if let Some((_eq, expr)) = &tail.default {
+            return error("DST does not support default field values (`field: Type = expr`)")
+                .add_help(
+                    expr.span(),
+                    "write the field in your constructor (e.g. `new`) before `assume_init`",
+                );
+        };
+
+        tail.attrs.retain_mut(|attr| keep(attr).is_some());
+
+        for field in fields.iter_mut() {
+            match &field.ty {
+                Type::Slice(slice) => {
+                    return error("only the last field of a DST struct may be unsized").add_help(
+                        slice.bracket_token.span.span(),
+                        "move this slice to the last position, or make it sized e.g. `[u16; 4]`",
+                    );
+                }
+                Type::TraitObject(trait_object) => {
+                    return error("only the last field of a DST struct may be unsized").add_note(
+                        trait_object.span(),
+                        "deriving DSTs with `dyn Trait` as a tail is not supported",
+                    );
+                }
+                Type::Path(path) if path.path.is_ident("str") => {
+                    return error("only the last field of a DST struct may be unsized").add_note(
+                        path.span(),
+                        "deriving DSTs with `str` as a tail is not supported",
+                    );
+                }
+                _ => {}
+            }
+            if let Some((_eq, expr)) = &field.default {
+                return error("DST does not support default field values (`field: Type = expr`)")
+                    .add_help(
+                        expr.span(),
+                        "write the field in your constructor (e.g. `new`) before `assume_init`",
+                    );
+            };
+            field.attrs.retain_mut(|attr| keep(attr).is_some());
+        }
 
         ast.attrs.retain_mut(|attr| keep(attr).is_some());
 
