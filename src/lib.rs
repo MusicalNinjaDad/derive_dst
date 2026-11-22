@@ -156,36 +156,33 @@ pub(crate) struct DstStruct {
     count_ty: Type,
 }
 
+fn parse_struct(data: Data, name: &Ident) -> DiagnosticResult<Punctuated<Field, Token![,]>> {
+    match data {
+        Data::Struct(struct_data) => match struct_data.fields {
+            Fields::Named(fields) => Ok(fields.named),
+            Fields::Unnamed(fields) => {
+                error("DST can only be derived for a struct with named fields").add_help(
+                    fields.paren_token.span.span(),
+                    "tuple structs are not supported",
+                )
+            }
+            Fields::Unit => error("DST can only be derived for a struct with named fields")
+                .add_help(name.span(), "unit structs have no fields"),
+        },
+        Data::Enum(enum_data) => error("DST can only be derived for a struct")
+            .add_help(enum_data.enum_token.span(), "not a struct"),
+        Data::Union(union_data) => error("DST can only be derived for a struct")
+            .add_help(union_data.union_token.span(), "not a struct"),
+    }
+}
+
 impl DstStruct {
     /// Handles all the invariant validation.
     pub(crate) fn parse(mut ast: DeriveInput) -> DiagnosticResult<Self> {
         let name = ast.ident;
         let mirror_name = format_ident!("Uninit{}", name);
 
-        let mut fields = match ast.data {
-            Data::Struct(struct_data) => match struct_data.fields {
-                Fields::Named(fields) => fields.named,
-                Fields::Unnamed(fields) => {
-                    return error("DST can only be derived for a struct with named fields")
-                        .add_help(
-                            fields.paren_token.span.span(),
-                            "tuple structs are not supported",
-                        );
-                }
-                Fields::Unit => {
-                    return error("DST can only be derived for a struct with named fields")
-                        .add_help(name.span(), "unit structs have no fields");
-                }
-            },
-            Data::Enum(enum_data) => {
-                return error("DST can only be derived for a struct")
-                    .add_help(enum_data.enum_token.span(), "not a struct");
-            }
-            Data::Union(union_data) => {
-                return error("DST can only be derived for a struct")
-                    .add_help(union_data.union_token.span(), "not a struct");
-            }
-        };
+        let mut fields = parse_struct(ast.data, &name)?;
 
         remove_doc_and_derive(&mut ast.attrs);
 
