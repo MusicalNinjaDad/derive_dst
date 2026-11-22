@@ -735,7 +735,7 @@ mod tests {
 
     #[test]
     fn parse_cstruct() {
-        let input: DeriveInput = parse_quote!{
+        let input: DeriveInput = parse_quote! {
             #[repr(C)]
             #[doc(ignore)]
             #[derive(Debug, DST)]
@@ -747,5 +747,7 @@ mod tests {
         };
         let device_info = DstStruct::parse(&input).unwrap();
         assert_eq!(device_info.name, &format_ident!("DeviceDetails"));
+        assert_eq!(device_info.tail, &parse_quote!(DevicePath: [u16]));
+        assert_eq!(device_info.tail_elem, &parse_quote!(u16));
     }
 }
