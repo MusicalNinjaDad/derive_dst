@@ -270,10 +270,10 @@ impl DstStruct {
             tail,
             tail_elem,
         } = self;
-        let uninit = format_ident!("Uninit{}", name);
-        let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
+        let uninit = format_ident!("Uninit{}", name);
         let uninit_head_fields = head.pairs();
+
         // one `layout_header` extend per sized head field, carrying that field's `cfg` gates
         // (so a `#[cfg]`-gated field is skipped here too, exactly as in the structs)
         let header_extends = head.iter().map(|field| {
@@ -292,7 +292,9 @@ impl DstStruct {
         // throughout the generated signatures & returns (`usize` for `[T]`, but spelled via
         // `Pointee` so the signatures mirror the fat pointer's metadata).
         let count_ty = quote! { <[#tail_elem] as ::core::ptr::Pointee>::Metadata };
-        
+
+        let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
         // Both generated impl headers carry the same explicit bounds, in a single place each:
         // - `[#elem]: Pointee<Metadata = usize>` pins the tail slice's fat-pointer metadata to
         //   `usize`, so the count type in the signatures is known to be `usize` *by the bound*
