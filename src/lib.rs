@@ -605,29 +605,8 @@ fn keep(meta: &mut Meta) -> Option<&mut Meta> {
         })
 }
 
-fn keep_(attr: &mut Attribute) -> Option<&mut Attribute> {
-    (is_not_doc_or_derive(&mut attr.meta))
-        .then_some(attr)
-        .and_then(|attr| {
-            if let Meta::List(meta_list) = &mut attr.meta
-                && meta_list.path.is_ident("cfg_attr")
-            {
-                let mut p = meta_list
-                    .parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)
-                    .expect("cfg_attr takes comma separated list");
-                p.retain(is_not_doc_or_derive);
-                if p.len() < 2 {
-                    // We stripped all the attributes and just have the condition left
-                    return None;
-                }
-                meta_list.tokens = p.into_token_stream();
-            }
-            Some(attr)
-        })
-}
-
 fn remove_doc_and_derive(attrs: &mut Vec<Attribute>) {
-    attrs.retain_mut(|attr| keep_(attr).is_some())
+    attrs.retain_mut(|attr| keep(&mut attr.meta).is_some())
 }
 
 fn repr_c(attr: &&Attribute) -> bool {
@@ -678,8 +657,7 @@ mod tests {
 
     #[test]
     fn nested_cfg_attr() {
-        let mut foo: Attribute =
-            parse_quote! {#[cfg_attr(test, cfg_attr(any(), derive(Debug)), cfg_attr(any(), deprecated, doc = "foo"))]};
+        let mut foo: Attribute = parse_quote! {#[cfg_attr(test, cfg_attr(any(), derive(Debug)), cfg_attr(any(), deprecated, doc = "foo"))]};
         let mut expected: Attribute = parse_quote! {#[cfg_attr(test, cfg_attr(any(), deprecated))]};
         assert_eq!(keep(&mut foo.meta), Some(&mut expected.meta));
     }
