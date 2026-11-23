@@ -161,25 +161,24 @@ pub(crate) struct DstStruct {
     count_ty: Type,
 }
 
-fn is_repr_c(attrs: &[Attribute]) -> DiagnosticResult<bool> {
+fn is_repr_c(attrs: &[Attribute]) -> DiagnosticResult<()> {
     let mut has_c = false;
     for attr in attrs.iter().filter(|attr| attr.path().is_ident("repr")) {
-        let Some(hints) = attr
-            .parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)
-            .ok()
-        else {
-            continue;
-        };
-        for hint in hints {
-            if matches!(&hint, Meta::Path(path) if path.is_ident("C")) {
-                has_c = true;
-            } else {
-                return error("DST requires exactly `#[repr(C)]`: `packed`, `align(N)` and other repr hints change the layout, so the generated allocation code would be unsound")
-                    .add_help(hint.span(), "remove this repr hint");
+        for hint in attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)? {
+            match &hint {
+                Meta::Path(path) if path.is_ident("C") => has_c = true,
+                _ => {
+                    return error("DST requires exactly `#[repr(C)]`: `packed`, `align(N)` and other repr hints change the layout, so the generated allocation code would be unsound")
+                        .add_help(hint.span(), "remove this repr hint")
+                }
             }
         }
     }
-    Ok(has_c)
+    if has_c {
+        Ok(())
+    } else {
+        error("DST requires #[repr(C)] so the layout can be generated for allocation")
+    }
 }
 
 fn remove_doc_and_derive(attrs: &mut Vec<Attribute>) {
@@ -273,10 +272,7 @@ impl DstStruct {
         let name = ast.ident;
         let mirror_name = format_ident!("Uninit{}", name);
 
-        if !is_repr_c(&ast.attrs)? {
-            return error("DST requires #[repr(C)] so the layout can be generated for allocation")
-                .add_help(name.span(), "add #[repr(C)] above this");
-        };
+        is_repr_c(&ast.attrs)?;
         remove_doc_and_derive(&mut ast.attrs);
 
         let (fields, tail) = parse_struct(ast.data, &name)?;
@@ -671,16 +667,16 @@ mod tests {
             #[repr(C)]
             struct Foo { tail: [u8] }
         };
-        assert!(is_repr_c(&ast.attrs).unwrap());
+        assert!(is_repr_c(&ast.attrs).is_ok());
     }
 
     #[test]
-    fn no_repr_is_not_repr_c() {
+    fn no_repr_is_an_error() {
         let ast: DeriveInput = parse_quote! {
             #[derive(Debug)]
             struct Foo { tail: [u8] }
         };
-        assert!(!is_repr_c(&ast.attrs).unwrap());
+        assert!(is_repr_c(&ast.attrs).is_error());
     }
 
     #[test]
