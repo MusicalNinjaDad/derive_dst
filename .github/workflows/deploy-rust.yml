@@ -49,30 +49,19 @@ jobs:
     if: ${{ needs.version.result == 'success' && needs.quality-check.result == 'success' }}
     environment: crates.io
     permissions:
-      # id-token: write is only needed for the OIDC login below; kept so it can be
-      # re-enabled by uncommenting that step after the first version is published.
       id-token: write
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7.0.1
+    
     # Install manually as different crates may have custom toolchains defined
     - name: install rust
       run: rustup set profile default && rustup install
 
-    # Re-enable this step once the first version is published.
-    # ========================================================
-    # Disabled for now: crates.io does not allow the initial publish of a crate via
-    # OIDC, so the first version must be published with an API token instead.
-    # # Use OIDC for updating existing crates.
-    # - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 #v1.0.6
-    #   id: auth
+    - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 #v1.0.6
+      id: auth
 
     - name: Publish
-      # Remove env after first version is published
-      # ===========================================
-      env:
-        # API token provided as the CARGO_REGISTRY_TOKEN secret on the crates.io environment
-        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
       run:
         cargo publish
 

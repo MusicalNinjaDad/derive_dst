@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.1.1]
+
+### Technical
+
+- added "alternatives" to the readme & library docs
+
 ## [v0.1.0]
 
 First release
