@@ -213,7 +213,7 @@ where
 {
     /// Convert into the fully initialised struct, reusing the same allocation.
     ///
-    /// # Safety
+    /// # SAFETY
     /// Every head field & all tail elements must have been initialised to a valid
     /// value for the respective types. All fields will have been initialised zeroed, but zero
     /// is not a valid value for all types. Calling `assume_init` where some fields
@@ -226,7 +226,7 @@ where
         // and the tail metadata (element count) is carried over unchanged.
         let wide = ptr::from_raw_parts_mut::<DeviceDetails>(raw.cast::<()>(), ptr::metadata(raw));
         // SAFETY:
-        // - the caller guarantees (see `# Safety` above) that every field is initialised,
+        // - the caller guarantees (see `# SAFETY` above) that every field is initialised,
         //   so the pointee is a valid `#name` value
         // - layout and metadata are identical to the mirror's, so the fat pointer is correct
         // - the pointer is moved into exactly one `Box` and not used afterwards

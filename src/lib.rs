@@ -5,9 +5,12 @@
 //! # Why
 //!
 //! The nomicon finishes the [section on DSTs][nomicon-DSTs] with the honest statement
+//! 
 //! > (Yes, custom DSTs are a largely half-baked feature for now.)
 //!
-//! and yet, various ffi functions make use of them. Often this is to provide a filepath or other
+//! and yet, various ffi functions make use of them.
+//! 
+//! Often this is to provide a filepath or other
 //! string as the final field (e.g. [`SP_DEVICE_INTERFACE_DETAIL_DATA_W`][Win-WPSIDDW] on Windows,
 //! [`inotify_event`][linux-inotify] on linux). Even with null-terminated strings, you still need to
 //! allocate a buffer in advance. Sometimes it's a dynamically-sized tail of structured data
@@ -71,7 +74,9 @@
 //! }
 //! ```
 //!
-//! Behind the scenes this generates (an import-collision-safe version of)
+//! Behind the scenes this generates (an import-collision-safe version of).
+//! 
+//! The doc-comments are included in the generated code, so you can read them locally and in IDE
 //!
 //! ```
 //! # #![feature(ptr_metadata)]
@@ -255,7 +260,7 @@
 //! {
 //!     /// Convert into the fully initialised struct, reusing the same allocation.
 //!     ///
-//!     /// # Safety
+//!     /// # SAFETY
 //!     /// Every head field & all tail elements must have been initialised to a valid
 //!     /// value for the respective types. All fields will have been initialised zeroed, but zero
 //!     /// is not a valid value for all types. Calling `assume_init` where some fields
@@ -268,7 +273,7 @@
 //!         // and the tail metadata (element count) is carried over unchanged.
 //!         let wide = ptr::from_raw_parts_mut::<DeviceDetails>(raw.cast::<()>(), ptr::metadata(raw));
 //!         // SAFETY:
-//!         // - the caller guarantees (see `# Safety` above) that every field is initialised,
+//!         // - the caller guarantees (see `# SAFETY` above) that every field is initialised,
 //!         //   so the pointee is a valid `#name` value
 //!         // - layout and metadata are identical to the mirror's, so the fat pointer is correct
 //!         // - the pointer is moved into exactly one `Box` and not used afterwards
@@ -742,7 +747,7 @@ impl DstStruct {
             impl #impl_generics #mirror_name #ty_generics #where_clause {
                 #[doc = "Convert into the fully initialised struct, reusing the same allocation."]
                 #[doc = ""]
-                #[doc = "# Safety"]
+                #[doc = "# SAFETY"]
                 #[doc = "Every head field & all tail elements must have been initialised to a valid"]
                 #[doc = "value for the respective types. All fields will have been initialised zeroed, but zero"]
                 #[doc = "is not a valid value for all types. Calling `assume_init` where some fields"]
@@ -760,7 +765,7 @@ impl DstStruct {
                         ::core::ptr::metadata(raw),
                     );
                     // SAFETY:
-                    // - the caller guarantees (see `# Safety` above) that every field is initialised,
+                    // - the caller guarantees (see `# SAFETY` above) that every field is initialised,
                     //   so the pointee is a valid `#name` value
                     // - layout and metadata are identical to the mirror's, so the fat pointer is correct
                     // - the pointer is moved into exactly one `Box` and not used afterwards
