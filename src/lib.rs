@@ -169,13 +169,55 @@ fn is_repr_c(attrs: &[Attribute], name: &Ident) -> DiagnosticResult<()> {
         .find(|attr| attr.path().is_ident("repr") && *attr != &repr_c);
 
     match (has_repr_c, other_repr) {
-        (true, None) => Ok(()),
-        (true, Some(repr)) => error("DST requires exactly `#[repr(C)]`: `packed`, `align(N)` and other repr hints change the layout, so the generated allocation code would be unsound")
-        .add_help(repr.span(), "remove this additional repr"),
-        (false, None) => error("DST requires #[repr(C)] so the layout can be generated for allocation")
-        .add_help(name.span(), "add #[repr(C)] above this"),
-        (false, Some(repr)) => error("DST requires #[repr(C)] so the layout can be generated for allocation")
-        .add_help(repr.span(), "change this to `#[repr(C)]`"),
+        (true, None) => attrs.iter().try_for_each(|attr| check_for_cfg_attr_repr(&attr.meta)),
+        (true, Some(repr)) => {
+            error("DST requires exactly `#[repr(C)]`: `packed`, `align(N)` and other repr hints change the layout, so the generated allocation code would be unsound")
+            .add_help(repr.span(), "remove this additional repr")
+        },
+        (false, None) => {
+            attrs.iter().try_for_each(|attr| check_for_cfg_attr_repr(&attr.meta))?;
+            error("DST requires #[repr(C)] so the layout can be generated for allocation")
+            .add_help(name.span(), "add #[repr(C)] above this")
+    },
+        (false, Some(repr)) => {
+            error("DST requires #[repr(C)] so the layout can be generated for allocation")
+            .add_help(repr.span(), "change this to `#[repr(C)]`")
+        },
+    }
+}
+
+fn check_for_cfg_attr_repr(meta: &Meta) -> DiagnosticResult<()> {
+    let Some(cfg_attr) = meta
+        .require_list()
+        .ok()
+        .filter(|meta_list| meta_list.path.is_ident("cfg_attr"))
+    else {
+        return Ok(());
+    };
+
+    let repr_c: Attribute = parse_quote!(#[repr(C)]);
+    let repr_c = repr_c.meta;
+    let p = cfg_attr
+        .parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)
+        .expect("cfg_attr takes comma separated list");
+    let has_repr_c = p.iter().find(|meta| *meta == &repr_c);
+    let other_repr = p
+        .iter()
+        .find(|meta| meta.path().is_ident("repr") && *meta != &repr_c);
+
+    match (has_repr_c, other_repr) {
+        (Some(repr_c), _) => {
+            error("DST requires #[repr(C)] so the layout can be generated for allocation")
+            .add_help(
+                repr_c.span(),
+                "this `repr(C)` is within a `#[cfg_attr(...)]` gate",
+            )?
+        },
+        (None, Some(other_repr)) => {
+            error("DST requires exactly `#[repr(C)]`: `packed`, `align(N)` and other repr hints change the layout, so the generated allocation code would be unsound")
+            .add_help(other_repr.span(), "remove this additional repr")?
+        },
+        (None, None) => p.iter().try_for_each(check_for_cfg_attr_repr),
     }
 }
 
