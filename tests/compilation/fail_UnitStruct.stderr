@@ -1,0 +1,12 @@
+error: DST requires at least one field (an unsized slice tail)
+ --> tests/compilation/fail_UnitStruct.rs:7:10
+  |
+7 | #[derive(DST)]
+  |          ^^^
+  |
+help: add a tail field like `DevicePath: [u16]`
+ --> tests/compilation/fail_UnitStruct.rs:8:8
+  |
+8 | struct UnitStruct;
+  |        ^^^^^^^^^^
+  = note: this error originates in the derive macro `DST` (in Nightly builds, run with -Z macro-backtrace for more info)

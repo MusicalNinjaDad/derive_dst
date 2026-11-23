@@ -6,7 +6,7 @@ use derive_dst::DST;
 #[repr(C)]
 #[derive(DST)]
 struct SizedTail {
-    cbSize: u32 = 4,
+    cbSize: u32,
     DevicePath: [u16; 4],
 }
 

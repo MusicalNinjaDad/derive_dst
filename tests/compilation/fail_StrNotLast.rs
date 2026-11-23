@@ -5,8 +5,8 @@ use derive_dst::DST;
 
 #[repr(C)]
 #[derive(DST)]
-struct MissingDefault {
-    cbSize: u32,
+struct StrNotLast {
+    name: str,
     DevicePath: [u16],
 }
 

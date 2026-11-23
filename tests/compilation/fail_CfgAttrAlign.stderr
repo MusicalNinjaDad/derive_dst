@@ -1,0 +1,12 @@
+error: DST requires exactly `#[repr(C)]`: `packed`, `align(N)` and other repr hints change the layout, so the generated allocation code would be unsound
+  --> tests/compilation/fail_CfgAttrAlign.rs:10:10
+   |
+10 | #[derive(DST)]
+   |          ^^^
+   |
+help: remove this additional repr
+  --> tests/compilation/fail_CfgAttrAlign.rs:9:1
+   |
+ 9 | #[cfg_attr(all(), repr(align(16)))]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: this error originates in the derive macro `DST` (in Nightly builds, run with -Z macro-backtrace for more info)

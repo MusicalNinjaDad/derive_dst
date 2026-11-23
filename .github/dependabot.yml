@@ -1,9 +1,7 @@
 version: 2
 updates:
 - package-ecosystem: "cargo"
-  directories:
-    - "/"
-    - "/tests/fixtures/*"
+  directory: "/"
   schedule:
     interval: "daily"
   cooldown:

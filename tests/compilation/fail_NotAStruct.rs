@@ -3,6 +3,7 @@
 
 use derive_dst::DST;
 
+#[repr(C)]
 #[derive(DST)]
 enum NotAStruct {
     A,
