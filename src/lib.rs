@@ -1,119 +1,85 @@
-//! `derive_dst` provides `#[derive(DST)]` for `#[repr(C)]` structs whose **last field is an
-//! unsized slice** (`[T]`) — the usual way to mirror a C/C++ "flexible array member" struct such
-//! as `SP_DEVICE_INTERFACE_DETAIL_DATA_W`.
+//! provides `#[derive(DST)]` for `#[repr(C)]` structs whose **last field is an unsized slice**
+//! (`[T]`) — the usual way to mirror a C/C++ "flexible array member" struct such as
+//! `SP_DEVICE_INTERFACE_DETAIL_DATA_W`.
 //!
-//! # What is generated
+//! # Why
 //!
-//! For
+//! The nomicon finishes the [section on DSTs][nomicon-DSTs] with the honest statement
+//! > (Yes, custom DSTs are a largely half-baked feature for now.)
+//!
+//! and yet, various ffi functions make use of them. Often this is to provide a filepath or other
+//! string as the final field (e.g. [`SP_DEVICE_INTERFACE_DETAIL_DATA_W`][Win-WPSIDDW] on Windows,
+//! [`inotify_event`][linux-inotify] on linux). Even with null-terminated strings, you still need to
+//! allocate a buffer in advance. Sometimes it's a dynamically-sized tail of structured data
+//! (e.g. [`fiemap`][linux-fiemap] on linux).
+//!
+//! So do you:
+//! - make a developer-time guess and hope your buffer is always big enough, wasting any oversizing
+//!   on every call, or ...
+//! - find a way to allocate a DST at runtime, when you know the exact size needed?
+//!
+//! # What you get
+//!
+//! The case which gave me the pattern for this macro:
 //!
 //! ```
 //! #![feature(ptr_metadata)]
+//! use std::io;
+//!
 //! use derive_dst::DST;
 //!
 //! #[repr(C)]
-//! #[derive(Debug, PartialEq, Eq, DST)]
-//! struct DeviceDetails {
+//! #[derive(Debug, DST)]
+//! #[allow(nonstandard_style, reason = "mirroring FFI struct")]
+//! /// A dynamically sized ffi-compatible version of `SP_DEVICE_INTERFACE_DETAIL_DATA_W`
+//! pub struct DeviceDetails {
 //!     cbSize: u32,
 //!     DevicePath: [u16],
 //! }
 //!
-//! let (mut uninit, (layout, tail_offset, count)) = DeviceDetails::new_uninit_for_size(8).unwrap();
-//! assert_eq!(layout.size(), 8); // 8 is a valid size: 4-byte head + 2 x u16, correctly padded
-//! assert_eq!(tail_offset, 4);
-//! assert_eq!(count, 2);
-//! // the allocation is uninitialised: write every field...
-//! uninit.cbSize.write(4);
-//! for word in uninit.DevicePath.iter_mut() {
-//!     word.write(0);
+//! impl DeviceDetails {
+//!     /// Create a new DeviceDetails of the given size, as returned by an null-call to
+//!     /// `SetupDiGetDeviceInterfaceDetailW`.
+//!     ///
+//!     /// Errors if the requested size does not produce a valid, well-aligned & padded struct
+//!     pub fn new(size: usize) -> io::Result<Box<Self>> {
+//!         // Create a new, boxed uninitialised DeviceDetails. This may return a LayoutError if the
+//!         // overall struct is somehow invalid.
+//!         let (mut raw, (layout, tail_offset, _tail_count)) =
+//!             Self::new_uninit_for_size(size).map_err(io::Error::other)?;
+//!
+//!         // Check that the returned DST is of the exact size requested. DST will always be
+//!         // well-aligned and padded.
+//!         if layout.size() != size {
+//!             return Err(io::Error::new(
+//!                 io::ErrorKind::InvalidData,
+//!                 "invalid buffer size",
+//!             ));
+//!         }
+//!
+//!         // API requires cbSize to be set to the size of the struct as if it were storing a single
+//!         // `\0` as the DevicePath.
+//!         let cbsize = tail_offset + size_of::<u16>();
+//!         raw.cbSize.write(cbsize as u32);
+//!
+//!         // SAFETY:
+//!         // - cbSize is correctly set to size required for an empty path with a single null-terminator
+//!         // - raw was initialized zeroed and `\0` is a valid value for u16
+//!         let valid = unsafe { raw.assume_init() };
+//!         Ok(valid)
+//!     }
 //! }
-//! // SAFETY: every field (`cbSize` and all tail words) is initialised.
-//! let details = unsafe { uninit.assume_init() };
-//! assert_eq!(details.cbSize, 4);
-//! assert_eq!(details.DevicePath.len(), 2);
 //! ```
 //!
-//! the derive generates **private items in the same module** (the caller owns the public API —
-//! e.g. a hand-written `pub fn new` that wraps these helpers — and no implementation details leak
-//! into it):
-//!
-//! - `UninitDeviceDetails` — a `#[repr(C)]` **mirror struct** in which every field is wrapped in
-//!   [`MaybeUninit`] (`cbSize: MaybeUninit<u32>`, `DevicePath: [MaybeUninit<u16>]`). `MaybeUninit<T>`
-//!   is guaranteed to have the same size, alignment and ABI as `T` but no validity invariant, so the
-//!   mirror has a layout identical to `DeviceDetails` yet is a valid value for *any* bit pattern —
-//!   including a fresh, uninitialised allocation. The mirror carries the **same attributes** as
-//!   `DeviceDetails` — copied verbatim, so lint levels (`allow`/`expect`/...), `cfg`/`cfg_attr`
-//!   gates, `repr` hints, ... all apply to the mirror too — except `derive` and `doc` (the mirror
-//!   gets its own `#[derive(Debug)]` and docs), and each mirrored field likewise carries its
-//!   original field's attributes except `derive` and `doc`.
-//! - `DeviceDetails::new_uninit_for_size(size: usize) -> Result<(Box<UninitDeviceDetails>, (Layout, usize, <[u16] as Pointee>::Metadata)), LayoutError>`
-//!   and `DeviceDetails::new_uninit_for_count(count: <[u16] as Pointee>::Metadata) -> Result<(Box<UninitDeviceDetails>, (Layout, usize, <[u16] as Pointee>::Metadata)), LayoutError>`
-//!   — **safe** allocating constructors, taking the total buffer size or the tail element count
-//!   respectively: they compute the layout via [`layout_for_size`][Self::layout_for_size] /
-//!   [`layout_for_count`][Self::layout_for_count], allocate a buffer of that layout, attach the
-//!   tail element count as the pointer metadata and return it boxed **together with the
-//!   `(Layout, tail offset, tail count)` tuple** — the same tuple the `layout_for_*` constructors
-//!   return — so initialisation routines do not need to call `layout_for_*` again. The allocation
-//!   is entirely **uninitialised**: the caller writes every field (via [`MaybeUninit::write`])
-//!   before `assume_init`. A `size` that does not match the correctly aligned and
-//!   padded layout is **not** rejected: the returned `Layout` carries the valid size
-//!   (`layout.size()`), so the caller can compare it with the requested `size` and decide how to
-//!   handle a mismatch before calling `assume_init`.
-//! - `DeviceDetails::new_uninit_for((layout, tail_offset, count): (Layout, usize, <[u16] as Pointee>::Metadata)) -> (Box<UninitDeviceDetails>, (Layout, usize, <[u16] as Pointee>::Metadata))`
-//!   — the **single allocation site** shared by `new_uninit_for_size` / `new_uninit_for_count` (they
-//!   just feed it the tuple their `layout_for_*` counterpart returns), so the `unsafe`
-//!   allocate → `from_raw_parts_mut` → `Box::from_raw` sequence exists exactly once and the layout is
-//!   computed exactly once per call.
-//! - `UninitDeviceDetails::assume_init(self: Box<Self>) -> Box<DeviceDetails>` — the single `unsafe`
-//!   boundary: once the caller has initialised every field, converts the box into the initialised
-//!   type. The typical pattern is a user-written `new` that calls `new_uninit_for_size` (or
-//!   `new_uninit_for_count`), performs any additional initialisation and then calls `assume_init`.
-//! - `DeviceDetails::layout_for_size(size: usize) -> Result<(Layout, usize, <[u16] as Pointee>::Metadata), LayoutError>`
-//!   and `DeviceDetails::layout_for_count(count: <[u16] as Pointee>::Metadata) -> Result<(Layout, usize, <[u16] as Pointee>::Metadata), LayoutError>`
-//!   — return the `(Layout, tail offset, tail count)` tuple: the [`Layout`], the byte offset of the unsized tail and the tail element count
-//!   (typed as the tail slice's `Pointee::Metadata`, i.e. the fat-pointer metadata — a `usize`
-//!   for `[T]`) for a buffer of `size` bytes or of `count` tail elements (the mirror has the
-//!   identical layout, so this serves both). They are built from two shared helpers:
-//!   `DeviceDetails::layout_header() -> Result<Layout, LayoutError>` (the sized head's layout,
-//!   computed once) and `DeviceDetails::extend_with_tail(header, count) -> Result<(Layout, usize, <[u16] as Pointee>::Metadata), LayoutError>`
-//!   (head + tail of `count` elements, padded to alignment).
-//!
-//! # Requirements
-//!
-//! - a **nightly** toolchain (pinned via `rust-toolchain.toml`); the crate *using* the derive needs
-//!   `#![feature(ptr_metadata)]` for the generated `ptr::from_raw_parts_mut` / `ptr::metadata` calls.
-//!
-//!   The proc-macro itself gets rich, spanned compiler errors from
-//!   [`proc_macro2_diagnostic`](https://github.com/MusicalNinjaDad/proc_macro2_diagnostic), which
-//!   uses `#![feature(proc_macro_diagnostic)]` internally when available (detected via
-//!   `build_safely`).
-//! - the annotated type must be a **struct with named fields** and **exactly `#[repr(C)]`** —
-//!   additional repr hints (`packed`, `align(N)`, ...) are rejected: they change the layout, so
-//!   the generated allocation code would be unsound. Note rustc merges multiple `#[repr(..)]`
-//!   attributes (e.g. `#[repr(C)]` on one line and `#[repr(packed)]` on the next is *not* a
-//!   compiler error), so every `repr` attribute is checked, not just the first one containing `C`.
-//!   A `repr` hidden behind a (possibly nested) `#[cfg_attr(...)]` gate is rejected as well: the
-//!   gate could be enabled, changing the layout while the generated code assumes plain `repr(C)`;
-//! - the **last field must be an unsized slice** `[T]`; only the last field may be unsized. The
-//!   generated impl headers carry the explicit bounds `where [T]: Pointee<Metadata = usize>, T: Sized`
-//!   — pinning the tail's fat-pointer metadata to `usize` (what the unsafe code relies on) and making
-//!   `size_of::<T>()` / `Layout::array::<T>()` well-defined. Zero-sized elements (`tail: [()]`) are
-//!   allowed: `layout_for_size` then maps any `size` to a tail count of 0 (the divide is
-//!   `checked_div(..).unwrap_or(0)`, which cannot panic), while `layout_for_count` accepts any count;
-//! - default field values (`field: Type = expr`) are **not** supported and are rejected with a
-//!   spanned error: the `Uninit` mirror could not carry them, so the caller's own constructor
-//!   (e.g. `new`) writes every field before `assume_init`.
-//!
-//! # Errors
-//!
-//! Misuse (not a struct, missing `repr(C)`, extra repr hints like `packed`/`align`, a `repr`
-//! behind a `#[cfg_attr(...)]` gate, sized tail, unsized non-tail field) is reported at compile
-//! time with spanned diagnostics (via
-//! `proc_macro2_diagnostic`) and covered by compile-fail tests in `tests/compilation/`. At runtime
-//! the only failure mode is an uncomputable layout (e.g.
-//! the tail array overflows `isize::MAX`): every generated function then returns
-//! `Err(::core::alloc::LayoutError)`. A `size` that does not match the correctly aligned and
-//! padded layout for the derived tail count is deliberately **not** an error — the returned
-//! `Layout` carries the valid size, so the caller can detect and handle the mismatch itself.
+//! Behind the scenes this generates (an import-collision-safe version of)
+//! 
+//! ```
+//! 
+//! ```
+//! 
+//! [nomicon-DSTs]: https://doc.rust-lang.org/nomicon/exotic-sizes.html#dynamically-sized-types-dsts
+//! [Win-WPSIDDW]: https://learn.microsoft.com/en-us/windows/win32/api/setupapi/ns-setupapi-sp_device_interface_detail_data_w
+//! [linux-inotify]: https://man7.org/linux/man-pages/man7/inotify.7.html
 
 use proc_macro::TokenStream as TokenStream1;
 use proc_macro2::TokenStream as TokenStream2;
