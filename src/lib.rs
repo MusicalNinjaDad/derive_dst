@@ -307,7 +307,7 @@
 //! - Hand-roll your own DSTs using the same pattern (if you do, please star the repo on github so
 //!   I know it's useful)
 //! - If you don't have an API that can report the required size at runtime and need to
-//!   trial-and-error [`grob`][https://docs.rs/grob/] handles growable buffers
+//!   trial-and-error [`grob`](https://docs.rs/grob/) handles growable buffers
 //! - Create a fixed, hopefully oversized, buffer type
 //! - If you are staying in rust *just `Box` the unsized type within the struct* and move on with
 //!   all your hair intact!
