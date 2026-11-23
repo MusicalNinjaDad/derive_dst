@@ -1,7 +1,4 @@
-#![cfg_attr(unstable_ptr_metadata, feature(ptr_metadata))]
-// `has_*` is only emitted for build_safely's known features; `ptr_metadata` goes via
-// `OtherFeature`, which only ever emits `unstable_*`
-#![cfg(unstable_ptr_metadata)]
+#![feature(ptr_metadata)]
 // field names mimic the C++ structs these DSTs mirror
 #![allow(non_snake_case)]
 

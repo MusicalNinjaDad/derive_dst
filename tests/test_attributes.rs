@@ -20,10 +20,7 @@
 //! All structs use snake_case fields unless they carry an explicit `#[allow(non_snake_case)]`
 //! (struct- or field-level), which is what makes the lint-based tests meaningful.
 
-#![cfg_attr(unstable_ptr_metadata, feature(ptr_metadata))]
-// `has_*` is only emitted for build_safely's known features; `ptr_metadata` goes via
-// `OtherFeature`, which only ever emits `unstable_*`
-#![cfg(unstable_ptr_metadata)]
+#![feature(ptr_metadata)]
 // Deny the lint that the `#[allow(non_snake_case)]` attributes below are meant to suppress:
 // if an allow is NOT mirrored onto the `Uninit` mirror, compilation of this file fails.
 #![deny(non_snake_case)]
