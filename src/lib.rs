@@ -72,11 +72,11 @@
 //! ```
 //!
 //! Behind the scenes this generates (an import-collision-safe version of)
-//! 
+//!
 //! ```
-//! 
+//!
 //! ```
-//! 
+//!
 //! [nomicon-DSTs]: https://doc.rust-lang.org/nomicon/exotic-sizes.html#dynamically-sized-types-dsts
 //! [Win-WPSIDDW]: https://learn.microsoft.com/en-us/windows/win32/api/setupapi/ns-setupapi-sp_device_interface_detail_data_w
 //! [linux-inotify]: https://man7.org/linux/man-pages/man7/inotify.7.html
@@ -369,14 +369,10 @@ impl DstStruct {
         let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
         quote! {
-            // the original struct's attributes (incl. `repr(C)` — required by `parse`), except
-            // `derive` & `doc`; the generated docs & `#[derive(Debug)]` below are the mirror's own
             #(#attrs)*
             #[doc = concat!("`MaybeUninit` mirror of [`", stringify!(#name), "}`]: identical `repr(C)` layout, but every field is")]
-            #[doc = "wrapped in `MaybeUninit`, so any bit pattern — including a fresh, uninitialised"]
-            #[doc = "allocation — is a valid value. Constructed by `new_uninit_for_size` /"]
-            #[doc = "`new_uninit_for_count`; converted back to the initialised type with"]
-            #[doc = "[`Self::assume_init`]."]
+            #[doc = "zero-initialised and wrapped in `MaybeUninit`. Constructed by `new_uninit_for_...` methods"]
+            #[doc = "converted back to the initialised type with [`Self::assume_init`]."]
             #[derive(Debug)]
             struct #mirror_name #generics #where_clause {
                 #(#mirror_head_fields)*
@@ -387,23 +383,12 @@ impl DstStruct {
                 #[doc = "Allocate a buffer for a `Self` value of `size` bytes and return it boxed as the"]
                 #[doc = "`Uninit` mirror of `Self`, together with the `(Layout, tail offset, tail count)` tuple."]
                 #[doc = ""]
-                #[doc = "The tail element count is derived from `size` by [`layout_for_size`][Self::layout_for_size];"]
-                #[doc = "the allocation then proceeds exactly as for [`new_uninit_for`][Self::new_uninit_for]."]
-                #[doc = ""]
+                #[doc = "# SAFETY"]
                 #[doc = "The allocation is entirely **uninitialised**: write every field with"]
                 #[doc = "[`MaybeUninit::write`], then convert with `assume_init` on the returned box."]
                 #[doc = ""]
-                #[doc = "# Errors"]
-                #[doc = "Returns `Err(LayoutError)` if the layout cannot be computed (e.g. the tail array"]
-                #[doc = "overflows) — see [`layout_for_size`][Self::layout_for_size]."]
-                #[doc = ""]
-                #[doc = "# Returns"]
-                #[doc = "The boxed mirror together with the `(Layout, tail offset, tail count)` tuple — the same"]
-                #[doc = "tuple [`layout_for_size`][Self::layout_for_size] returns (the count typed as the tail"]
-                #[doc = "slice's `Pointee::Metadata`) — so initialisation routines do not need to call"]
-                #[doc = "[`layout_for_size`][Self::layout_for_size] again."]
-                #[doc = ""]
-                #[doc = "Note: a `size` that does not match the correctly aligned and padded layout for the derived"]
+                #[doc = "# Note"]
+                #[doc = "a `size` that does not match the correctly aligned and padded layout for the derived"]
                 #[doc = "tail count is **not** rejected — the returned `Layout` carries the valid size"]
                 #[doc = "(`layout.size()`), so the caller can compare it with the requested `size` and decide how to"]
                 #[doc = "handle a mismatch before calling `assume_init`."]
@@ -416,25 +401,19 @@ impl DstStruct {
                     ),
                     ::core::alloc::LayoutError,
                 > {
-                    ::core::result::Result::Ok(Self::new_uninit_for(Self::layout_for_size(size)?))
+                    // SAFETY: layout & count are directly calculated by layout_for_size and passed on
+                    unsafe {
+                        ::core::result::Result::Ok(Self::new_uninit_for(Self::layout_for_size(size)?))
+                    }
                 }
 
                 #[doc = "Allocate a buffer holding `count` tail elements and return it boxed as the `Uninit`"]
                 #[doc = "mirror of `Self`, together with the `(Layout, tail offset, tail count)` tuple. `count` is"]
-                #[doc = "typed as the tail slice's `Pointee::Metadata` (a `usize` for `[T]`), matching the"]
-                #[doc = "fat-pointer metadata."]
+                #[doc = "typed as the tail slice's `Pointee::Metadata` (a `usize` for `[T]`)."]
                 #[doc = ""]
-                #[doc = "This is [`new_uninit_for`][Self::new_uninit_for] fed with the tuple from"]
-                #[doc = "[`layout_for_count`][Self::layout_for_count] — the layout is computed exactly once."]
-                #[doc = ""]
-                #[doc = "# Errors"]
-                #[doc = "Returns `Err(LayoutError)` if the layout for `count` tail elements cannot be computed"]
-                #[doc = "(e.g. overflow) — see [`layout_for_count`][Self::layout_for_count]."]
-                #[doc = ""]
-                #[doc = "# Returns"]
-                #[doc = "The boxed mirror together with the `(Layout, tail offset, tail count)` tuple — the same"]
-                #[doc = "tuple [`layout_for_count`][Self::layout_for_count] returns — so initialisation routines"]
-                #[doc = "do not need to call [`layout_for_count`][Self::layout_for_count] again."]
+                #[doc = "# SAFETY"]
+                #[doc = "The allocation is entirely **uninitialised**: write every field with"]
+                #[doc = "[`MaybeUninit::write`], then convert with `assume_init` on the returned box."]
                 fn new_uninit_for_count(
                     count: #count_ty,
                 ) -> ::core::result::Result<
@@ -444,36 +423,25 @@ impl DstStruct {
                     ),
                     ::core::alloc::LayoutError,
                 > {
-                    ::core::result::Result::Ok(Self::new_uninit_for(Self::layout_for_count(count)?))
+                    unsafe {
+                        // SAFETY: layout & count are directly calculated by layout_for_count and passed on
+                        ::core::result::Result::Ok(Self::new_uninit_for(Self::layout_for_count(count)?))
+                    }
                 }
 
-                #[doc = "Allocate a buffer of `layout` bytes, attach `count` as the tail metadata and return it"]
-                #[doc = "boxed as the `Uninit` mirror of `Self`, together with the `(Layout, tail offset, tail"]
-                #[doc = "count)` tuple it was built for. This is the **single allocation site** shared by"]
-                #[doc = "[`new_uninit_for_size`][Self::new_uninit_for_size] and"]
-                #[doc = "[`new_uninit_for_count`][Self::new_uninit_for_count]: pass it the tuple returned by"]
-                #[doc = "[`layout_for_size`][Self::layout_for_size] / [`layout_for_count`][Self::layout_for_count]."]
+                #[doc = "Allocate a buffer with the given `layout` and return it boxed as the"]
+                #[doc = "`Uninit` mirror of `Self`, together with the `(Layout, tail offset, tail"]
+                #[doc = "count)` tuple it was built for."]
                 #[doc = ""]
+                #[doc = "# SAFETY"]
                 #[doc = "The allocation is entirely **uninitialised**: write every field with"]
                 #[doc = "[`MaybeUninit::write`], then convert with `assume_init` on the returned box."]
                 #[doc = ""]
-                #[doc = "# Aborts"]
-                #[doc = "Aborts via `handle_alloc_error` if the allocation fails; the `layout` is taken as"]
-                #[doc = "given (computed by `layout_for_*`), so it cannot fail here."]
-                #[doc = ""]
-                #[doc = "# Returns"]
-                #[doc = "The boxed mirror together with the `(Layout, tail offset, tail count)` tuple passed in."]
-                #[doc = ""]
-                #[doc = "# Implementation safety"]
-                #[doc = ""]
-                #[doc = "The internal `unsafe` block is sound: `raw` was allocated by `Global` with the"]
-                #[doc = "given `layout`, so it is valid for reads & writes of that layout; `count` is the"]
-                #[doc = "number of tail elements that layout was built for, so `ptr::from_raw_parts_mut`"]
-                #[doc = concat!("attaches the correct metadata for the mirror (last field: `[MaybeUninit<", stringify!(#tail_elem), ">]`).")]
-                #[doc = "Every field of the mirror is `MaybeUninit<_>`, which is valid for ANY bit pattern,"]
-                #[doc = "so the uninitialised allocation is a valid pointee; the pointer is moved into"]
-                #[doc = "exactly one `Box` and not used afterwards."]
-                fn new_uninit_for(
+                #[doc = "Extra care must be taken when using this function directly to ensure that"]
+                #[doc = "`layout` and `count` are valid in combination. No validation is performed"]
+                #[doc = "or possible in this function. Prefer the safe versions [`new_uninit_for_size`]"]
+                #[doc = "and [`new_uninit_for_count] wherever possible."]
+                unsafe fn new_uninit_for(
                     (layout, offset, count): (::core::alloc::Layout, usize, #count_ty),
                 ) -> (
                     ::std::boxed::Box<#mirror_name #ty_generics>,
@@ -510,18 +478,7 @@ impl DstStruct {
                 }
 
                 #[doc = "Calculate the `(layout, offset of the unsized tail, tail element count)`"]
-                #[doc = "for a `Self` buffer of `size` bytes. The count is typed as the tail slice's"]
-                #[doc = "`Pointee::Metadata` (a `usize` for `[T]`), matching the fat-pointer metadata."]
-                #[doc = "The `Uninit` mirror has the identical layout."]
-                #[doc = ""]
-                #[doc = "The tail count is derived from `size` (the bytes beyond the sized head, rounded down"]
-                #[doc = "to whole elements; a `size` smaller than the head maps to an empty tail). A `size`"]
-                #[doc = "that does not equal the resulting `layout.size()` is **not** an error: compare the"]
-                #[doc = "returned [`Layout`] with the requested `size` yourself to validate it."]
-                #[doc = ""]
-                #[doc = "# Errors"]
-                #[doc = "Returns `Err(LayoutError)` if the layout cannot be computed (e.g. the tail array"]
-                #[doc = "overflows)."]
+                #[doc = "for a `Self` buffer of `size` bytes."]
                 #[doc = ""]
                 #[doc = "# SAFETY"]
                 #[doc = "The correctness of this layout and the tail offset is relied upon by unsafe code"]
@@ -547,13 +504,7 @@ impl DstStruct {
                 }
 
                 #[doc = "Calculate the `(layout, offset of the unsized tail, tail element count)`"]
-                #[doc = "for a `Self` buffer holding `count` tail elements. `count` is typed as the tail"]
-                #[doc = "slice's `Pointee::Metadata` (a `usize` for `[T]`), matching the fat-pointer metadata."]
-                #[doc = "The `Uninit` mirror has the identical layout."]
-                #[doc = ""]
-                #[doc = "# Errors"]
-                #[doc = "Returns `Err(LayoutError)` if the layout cannot be computed (e.g. the tail array"]
-                #[doc = "overflows)."]
+                #[doc = "for a `Self` buffer holding `count` tail elements."]
                 #[doc = ""]
                 #[doc = "# SAFETY"]
                 #[doc = "The correctness of this layout and the tail offset is relied upon by unsafe code"]
@@ -567,12 +518,7 @@ impl DstStruct {
                     Self::extend_with_tail(Self::layout_header()?, count)
                 }
 
-                #[doc = "The [`Layout`] of the sized head (everything before the unsized tail), computed once"]
-                #[doc = "and shared by [`layout_for_size`][Self::layout_for_size] and"]
-                #[doc = "[`layout_for_count`][Self::layout_for_count]."]
-                #[doc = ""]
-                #[doc = "# Errors"]
-                #[doc = "Returns `Err(LayoutError)` if a head field's layout cannot be extended (overflow)."]
+                #[doc = "The [`Layout`] of the sized head (everything before the unsized tail)"]
                 fn layout_header() -> ::core::result::Result<::core::alloc::Layout, ::core::alloc::LayoutError> {
                     // sequential `extend` reproduces the repr(C) placement of the sized head
                     let mut prefix = ::core::alloc::Layout::new::<()>();
@@ -582,11 +528,7 @@ impl DstStruct {
 
                 #[doc = "Extend a head [`Layout`] (from [`layout_header`][Self::layout_header]) with the tail of"]
                 #[doc = "`count` elements and return the resulting `(layout, tail offset, count)` tuple, padded"]
-                #[doc = "to the alignment. The `Uninit` mirror has the identical layout."]
-                #[doc = ""]
-                #[doc = "# Errors"]
-                #[doc = "Returns `Err(LayoutError)` if the tail array overflows or the layouts cannot be"]
-                #[doc = "extended."]
+                #[doc = "to the alignment."]
                 fn extend_with_tail(
                     header: ::core::alloc::Layout,
                     count: #count_ty,
@@ -604,9 +546,11 @@ impl DstStruct {
                 #[doc = "Convert into the fully initialised struct, reusing the same allocation."]
                 #[doc = ""]
                 #[doc = "# Safety"]
-                #[doc = "Every field of `self` must have been initialised: each sized field (a `MaybeUninit`)"]
-                #[doc = "via [`MaybeUninit::write`], and every element of the unsized tail likewise."]
-                #[doc = "Reading a field that was never written is undefined behaviour."]
+                #[doc = "Every head field & all tail elements must have been initialised to a valid"]
+                #[doc = "value for the respective types. All fields will have been initialised zeroed, but zero"]
+                #[doc = "is not a valid value for all types. Calling `assume_init` where some fields"]
+                #[doc = "are not properly initialised will lead to UB. See [`core::mem::MaybeUninit::assume_init`]"]
+                #[doc = "for more details."]
                 unsafe fn assume_init(
                     self: ::std::boxed::Box<Self>,
                 ) -> ::std::boxed::Box<#name #ty_generics> {

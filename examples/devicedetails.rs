@@ -4,7 +4,7 @@ use std::io;
 use derive_dst::DST;
 
 #[repr(C)]
-#[derive(Debug, DST)]
+#[derive(Debug, DST, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[allow(nonstandard_style, reason = "mirroring FFI struct")]
 /// A dynamically sized ffi-compatible version of `SP_DEVICE_INTERFACE_DETAIL_DATA_W`
 pub struct DeviceDetails {
