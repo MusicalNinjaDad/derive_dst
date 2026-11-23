@@ -114,13 +114,12 @@
 
 use proc_macro::TokenStream as TokenStream1;
 use proc_macro2::TokenStream as TokenStream2;
-use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
+use proc_macro2_diagnostic::{ToTokens, prelude::*};
 use quote::{ToTokens as _, format_ident, quote};
 use syn::{
     Attribute, Data, DeriveInput, ExprAssign, Field, Fields, Generics, Ident, Meta, Token, Type,
     parse_quote, punctuated::Punctuated, spanned::Spanned,
 };
-use try_v2::Transform;
 
 #[proc_macro_derive(DST)]
 /// Derives an `UninitFoo` mirror struct, safe allocating constructors `Foo::new_uninit_for_size`
@@ -164,17 +163,19 @@ pub(crate) struct DstStruct {
 
 fn is_repr_c(attrs: &[Attribute], name: &Ident) -> DiagnosticResult<()> {
     let repr_c: Attribute = parse_quote!(#[repr(C)]);
-
-    match attrs.iter().find(|attr| attr.path().is_ident("repr") && *attr != &repr_c)
-    {
-        Some(repr) => error("DST requires exactly `#[repr(C)]`: `packed`, `align(N)` and other repr hints change the layout, so the generated allocation code would be unsound")
-                        .add_help(repr.span(), "change this to `#[repr(C)]`"),
-        None => attrs
+    let has_repr_c = attrs.iter().any(|attr| attr == &repr_c);
+    let other_repr = attrs
         .iter()
-        .find(|attr| *attr == &repr_c)
-        .or_error("DST requires #[repr(C)] so the layout can be generated for allocation")
-        .add_help(name.span(), "add #[repr(C)] above this")
-        .map(|_|())
+        .find(|attr| attr.path().is_ident("repr") && *attr != &repr_c);
+
+    match (has_repr_c, other_repr) {
+        (true, None) => Ok(()),
+        (true, Some(repr)) => error("DST requires exactly `#[repr(C)]`: `packed`, `align(N)` and other repr hints change the layout, so the generated allocation code would be unsound")
+        .add_help(repr.span(), "remove this additional repr"),
+        (false, None) => error("DST requires #[repr(C)] so the layout can be generated for allocation")
+        .add_help(name.span(), "add #[repr(C)] above this"),
+        (false, Some(repr)) => error("DST requires #[repr(C)] so the layout can be generated for allocation")
+        .add_help(repr.span(), "change this to `#[repr(C)]`"),
     }
 }
 
