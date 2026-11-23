@@ -1,4 +1,4 @@
-//! provides `#[derive(DST)]` for `#[repr(C)]` structs whose **last field is an unsized slice**
+//! Provides `#[derive(DST)]` for `#[repr(C)]` structs whose **last field is an unsized slice**
 //! (`[T]`) — the usual way to mirror a C/C++ "flexible array member" struct such as
 //! `SP_DEVICE_INTERFACE_DETAIL_DATA_W`.
 //!
@@ -281,6 +281,26 @@
 //!     }
 //! }
 //! ```
+//!
+//! # Requirements
+//!
+//! - Nightly toolchain (and `feature(ptr_metadata)` not forbidden in config.toml)
+//! - DST must:
+//!     - be `#[repr(C)]`, no additional alignment or packing specification
+//!     - have a *single*` unsized field as the *tail* (last field) as per the [nomicon][nomicon-DSTs]
+//!     - have a slice `[T]` as the unsized tail
+//!
+//! # SAFETY
+//!
+//! We take extreme care to catch as many incorrect usages as possible at compile-time. Deliberately
+//! or accidentally circumventing the above requirements will most likely lead to UB.
+//!
+//! We recommend you build the docs locally via `cargo doc --document-private-items` to review the
+//! requirements for `assume_init`
+//!
+//! The *`UninitMirror`* type is zero-initialised and not guaranteed to be valid. All fields must
+//! be suitably initialised, _including **all elements of the tail slice**_, before calling
+//! `assume_init`.
 //!
 //! [nomicon-DSTs]: https://doc.rust-lang.org/nomicon/exotic-sizes.html#dynamically-sized-types-dsts
 //! [Win-WPSIDDW]: https://learn.microsoft.com/en-us/windows/win32/api/setupapi/ns-setupapi-sp_device_interface_detail_data_w
