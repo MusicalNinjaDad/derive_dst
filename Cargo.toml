@@ -7,7 +7,7 @@ description = "Derive macro for DST structs: generates a private `UninitFoo` May
 authors = ["Mike Foster <https://github.com/MusicalNinjaDad>"]
 keywords = ["derive", "DST", "unsized", "layout", "ffi"]
 repository = "https://github.com/MusicalNinjaDad/derive_dst"
-categories = ["development-tools", "no-std"]
+categories = ["development-tools"]
 license = "MIT"
 exclude = [".github", ".devcontainer", ".vibe"]
 
