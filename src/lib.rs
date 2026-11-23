@@ -62,7 +62,7 @@
 //!
 //!         // API requires cbSize to be set to the size of the struct as if it were storing a single
 //!         // `\0` as the DevicePath.
-//!         let cbsize = tail_offset + size_of::<u16>();
+//!         let cbsize = (tail_offset + size_of::<u16>()).next_multiple_of(layout.align());
 //!         raw.cbSize.write(cbsize as u32);
 //!
 //!         // SAFETY:
@@ -181,7 +181,7 @@
 //!         Box<UninitDeviceDetails>,
 //!         (Layout, usize, <[u16] as Pointee>::Metadata),
 //!     ) {
-//!         let raw = match Global::allocate(&Global, layout) {
+//!         let raw = match Global::allocate_zeroed(&Global, layout) {
 //!             Result::Ok(pointer) => pointer,
 //!             Result::Err(_) => alloc::handle_alloc_error(layout),
 //!         };
@@ -670,7 +670,7 @@ impl DstStruct {
                     ::std::boxed::Box<#mirror_name #ty_generics>,
                     (::core::alloc::Layout, usize, #count_ty),
                 ) {
-                    let raw = match <::std::alloc::Global as ::core::alloc::Allocator>::allocate(
+                    let raw = match <::std::alloc::Global as ::core::alloc::Allocator>::allocate_zeroed(
                         &::std::alloc::Global,
                         layout,
                     ) {
