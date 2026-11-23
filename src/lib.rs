@@ -472,7 +472,7 @@ impl DstStruct {
                     // **The pointee is valid for any bytes**
                     // - every field of the mirror is `MaybeUninit<_>` (no validity invariant), so the
                     //   uninitialised allocation is a valid value of the mirror type
-                    let mut boxed = unsafe { ::std::boxed::Box::from_raw(wide) };
+                    let boxed = unsafe { ::std::boxed::Box::from_raw(wide) };
 
                     (boxed, (layout, offset, count))
                 }
