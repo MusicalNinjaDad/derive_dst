@@ -316,7 +316,7 @@ use syn::{
 };
 
 #[proc_macro_derive(DST)]
-/// Derives the required polyfill to allow this DST. See the [crate-level documentation](crate)
+/// Derives the required polyfill for this DST. See the [crate-level documentation](crate)
 /// for the full contract and generated code.
 pub fn derive_dst(input: TokenStream1) -> TokenStream1 {
     impl_dst(input.into()).to_tokens()
