@@ -142,8 +142,11 @@ assert_eq!((layout.size(), tail_offset, count), (8, 4, 2));
 
   (The proc-macro crate itself additionally uses `proc_macro_diagnostic`, detected via
   [`build_safely`](https://crates.io/crates/build_safely), for rich compiler errors.)
-- The annotated type must be a **struct with named fields** and **`#[repr(C)]`** (the whole point
-  is a predictable, C-compatible layout).
+- The annotated type must be a **struct with named fields** and **exactly `#[repr(C)]`** (the
+  whole point is a predictable, C-compatible layout) — additional repr hints (`packed`,
+  `align(N)`, ...) are rejected, since they change the layout. Multiple `#[repr(..)]` attributes
+  are merged by rustc rather than rejected (e.g. `#[repr(C)]` + `#[repr(packed)]` on separate
+  lines), so every `repr` attribute is checked.
 - The **last field must be an unsized slice** `[T]`; only the last field may be unsized. The
   generated impl headers carry the explicit bounds `where [T]: Pointee<Metadata = usize>, T: Sized`
   — pinning the tail's fat-pointer metadata to `usize` (what the unsafe code relies on) and making
@@ -156,7 +159,8 @@ assert_eq!((layout.size(), tail_offset, count), (8, 4, 2));
 - Everything generated (the `UninitFoo` mirror and all methods) is **private to the module** the
   struct is declared in — write your own `pub` wrappers (e.g. `pub fn new`) around them.
 
-Misuse (wrong item kind, missing `repr(C)`, sized tail, unsized non-tail field, ...) is reported
+Misuse (wrong item kind, missing `repr(C)`, extra repr hints like `packed`/`align`, sized tail,
+unsized non-tail field, ...) is reported
 with rich, spanned compiler diagnostics via
 [`proc_macro2_diagnostic`](https://github.com/MusicalNinjaDad/proc_macro2_diagnostic), and covered
 by compile-fail tests (`tests/compilation/`).

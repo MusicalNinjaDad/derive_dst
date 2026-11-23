@@ -79,6 +79,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `size()` is the valid size, so the caller can detect and handle a mismatch itself before
   `assume_init`.
 
+### Fixed
+
+- The derive now requires **exactly** `#[repr(C)]`: the old check accepted any `repr` attribute
+  containing `C`, so `#[repr(C, packed)]`, `#[repr(C, align(N))]` — or `#[repr(C)]` and
+  `#[repr(packed)]` on separate lines, which rustc merges rather than rejecting — slipped through
+  and made the generated layout/allocation code unsound (`packed` removes padding, `align(N)`
+  raises the alignment beyond what `Layout::extend` computes). `is_repr_c` now inspects every
+  `repr` attribute and rejects any hint other than `C` with a spanned compile error; covered by a
+  compile-fail test with `repr(C)` and `repr(packed)` on different lines
+  (`tests/compilation/fail_MultipleReprs.rs`).
+
 ## [0.1.0] - 2026-11-20
 
 ### Added

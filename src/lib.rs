@@ -86,7 +86,11 @@
 //!   [`proc_macro2_diagnostic`](https://github.com/MusicalNinjaDad/proc_macro2_diagnostic), which
 //!   uses `#![feature(proc_macro_diagnostic)]` internally when available (detected via
 //!   `build_safely`).
-//! - the annotated type must be a **struct with named fields** and **`#[repr(C)]`**;
+//! - the annotated type must be a **struct with named fields** and **exactly `#[repr(C)]`** —
+//!   additional repr hints (`packed`, `align(N)`, ...) are rejected: they change the layout, so
+//!   the generated allocation code would be unsound. Note rustc merges multiple `#[repr(..)]`
+//!   attributes (e.g. `#[repr(C)]` on one line and `#[repr(packed)]` on the next is *not* a
+//!   compiler error), so every `repr` attribute is checked, not just the first one containing `C`;
 //! - the **last field must be an unsized slice** `[T]`; only the last field may be unsized. The
 //!   generated impl headers carry the explicit bounds `where [T]: Pointee<Metadata = usize>, T: Sized`
 //!   — pinning the tail's fat-pointer metadata to `usize` (what the unsafe code relies on) and making
@@ -99,9 +103,10 @@
 //!
 //! # Errors
 //!
-//! Misuse (not a struct, missing `repr(C)`, sized tail, unsized non-tail field) is reported at
-//! compile time with spanned diagnostics (via `proc_macro2_diagnostic`) and covered by compile-fail
-//! tests in `tests/compilation/`. At runtime the only failure mode is an uncomputable layout (e.g.
+//! Misuse (not a struct, missing `repr(C)`, extra repr hints like `packed`/`align`, sized tail,
+//! unsized non-tail field) is reported at compile time with spanned diagnostics (via
+//! `proc_macro2_diagnostic`) and covered by compile-fail tests in `tests/compilation/`. At runtime
+//! the only failure mode is an uncomputable layout (e.g.
 //! the tail array overflows `isize::MAX`): every generated function then returns
 //! `Err(::core::alloc::LayoutError)`. A `size` that does not match the correctly aligned and
 //! padded layout for the derived tail count is deliberately **not** an error — the returned
@@ -156,19 +161,25 @@ pub(crate) struct DstStruct {
     count_ty: Type,
 }
 
-fn repr_c(attr: &&Attribute) -> bool {
-    if let Meta::List(meta_list) = &attr.meta
-        && meta_list.path.is_ident("repr")
-    {
-        meta_list
+fn is_repr_c(attrs: &[Attribute]) -> DiagnosticResult<bool> {
+    let mut has_c = false;
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident("repr")) {
+        let Some(hints) = attr
             .parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)
-            .is_ok_and(|args| {
-                args.iter()
-                    .any(|meta| matches!(meta, Meta::Path(path) if path.is_ident("C")))
-            })
-    } else {
-        false
+            .ok()
+        else {
+            continue;
+        };
+        for hint in hints {
+            if matches!(&hint, Meta::Path(path) if path.is_ident("C")) {
+                has_c = true;
+            } else {
+                return error("DST requires exactly `#[repr(C)]`: `packed`, `align(N)` and other repr hints change the layout, so the generated allocation code would be unsound")
+                    .add_help(hint.span(), "remove this repr hint");
+            }
+        }
     }
+    Ok(has_c)
 }
 
 fn remove_doc_and_derive(attrs: &mut Vec<Attribute>) {
@@ -262,7 +273,7 @@ impl DstStruct {
         let name = ast.ident;
         let mirror_name = format_ident!("Uninit{}", name);
 
-        if ast.attrs.iter().find(repr_c).is_none() {
+        if !is_repr_c(&ast.attrs)? {
             return error("DST requires #[repr(C)] so the layout can be generated for allocation")
                 .add_help(name.span(), "add #[repr(C)] above this");
         };
@@ -652,6 +663,52 @@ mod tests {
         let expected: Attribute = parse_quote! {#[cfg_attr(test, cfg_attr(any(), deprecated))]};
         assert!(keep(&mut foo.meta));
         assert_eq!(foo, expected);
+    }
+
+    #[test]
+    fn repr_c_alone_is_repr_c() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs).unwrap());
+    }
+
+    #[test]
+    fn no_repr_is_not_repr_c() {
+        let ast: DeriveInput = parse_quote! {
+            #[derive(Debug)]
+            struct Foo { tail: [u8] }
+        };
+        assert!(!is_repr_c(&ast.attrs).unwrap());
+    }
+
+    #[test]
+    fn packed_on_a_separate_repr_line_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[repr(packed)]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs).is_error());
+    }
+
+    #[test]
+    fn packed_in_the_same_repr_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C, packed)]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs).is_error());
+    }
+
+    #[test]
+    fn align_in_repr_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C, align(16))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs).is_error());
     }
 
     #[test]
