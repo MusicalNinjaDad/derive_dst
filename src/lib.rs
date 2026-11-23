@@ -120,6 +120,7 @@ use syn::{
     Attribute, Data, DeriveInput, ExprAssign, Field, Fields, Generics, Ident, Meta, Token, Type,
     parse_quote, punctuated::Punctuated, spanned::Spanned,
 };
+use try_v2::Transform;
 
 #[proc_macro_derive(DST)]
 /// Derives an `UninitFoo` mirror struct, safe allocating constructors `Foo::new_uninit_for_size`
@@ -171,9 +172,9 @@ fn is_repr_c(attrs: &[Attribute], name: &Ident) -> DiagnosticResult<()> {
         None => attrs
         .iter()
         .find(|attr| *attr == &repr_c)
-        .map(|_|())
         .or_error("DST requires #[repr(C)] so the layout can be generated for allocation")
         .add_help(name.span(), "add #[repr(C)] above this")
+        .map(|_|())
     }
 }
 
