@@ -23,8 +23,5 @@ quote = "1.0.45"
 [dev-dependencies]
 trybuild = "1.0.116"
 
-[build-dependencies]
-build_safely = "0.6.1"
-
 [workspace.metadata.ninja-xtask]
 env = { "LD_LIBRARY_PATH" = false }
