@@ -1,6 +1,6 @@
 [package]
 name = "derive_dst"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 readme = "README.md"
 description = "Derive macro for DST structs: generates a private `UninitFoo` MaybeUninit mirror, safe allocation constructors (`new_uninit_for_size` / `new_uninit_for_count` returning the box with its `Layout`, tail offset & count), an unsafe `assume_init`, and layout constructors (`layout_for_size` / `layout_for_count`) returning `LayoutError`. Requires nightly."
