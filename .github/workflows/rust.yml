@@ -92,7 +92,7 @@ jobs:
     - name: Run tests
       env:
         MIRIFLAGS: -Zmiri-disable-isolation
-      run: cargo miri nextest run --no-fail-fast -- --skip errors
+      run: cargo miri nextest run --no-fail-fast -- --examples --tests
 
   report:
     if: ${{ always() && github.event_name == 'schedule' }}

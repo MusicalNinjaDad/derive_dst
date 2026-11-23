@@ -34,7 +34,7 @@ impl DeviceDetails {
 
         // API requires cbSize to be set to the size of the struct as if it were storing a single
         // `\0` as the DevicePath.
-        let cbsize = tail_offset + size_of::<u16>();
+        let cbsize = (tail_offset + size_of::<u16>()).next_multiple_of(layout.align());
         raw.cbSize.write(cbsize as u32);
 
         // SAFETY:
@@ -46,3 +46,10 @@ impl DeviceDetails {
 }
 
 fn main() {}
+
+#[test]
+fn devicedetails() {
+    let details = DeviceDetails::new(8).unwrap();
+    assert_eq!(details.cbSize, 8);
+    assert_eq!(details.DevicePath, [0; 2])
+}
