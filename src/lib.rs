@@ -492,9 +492,6 @@ impl DstStruct {
                     let header = Self::layout_header()?;
 
                     let elem_size = ::core::mem::size_of::<#tail_elem>();
-                    // named fns only (no `/`): a size smaller than the head saturates to an empty
-                    // tail; the caller validates the result by comparing `layout.size()` with the
-                    // requested `size`
                     let tail_bytes = size.saturating_sub(header.size());
                     // `checked_div` returns `None` on a zero divisor (ZST tail element) — map that
                     // to a count of 0 instead of panicking or special-casing
