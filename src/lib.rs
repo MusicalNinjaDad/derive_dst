@@ -161,7 +161,7 @@ pub(crate) struct DstStruct {
     count_ty: Type,
 }
 
-fn is_repr_c(attrs: &[Attribute]) -> DiagnosticResult<()> {
+fn is_repr_c(attrs: &[Attribute], name: &Ident) -> DiagnosticResult<()> {
     let mut has_c = false;
     for attr in attrs.iter().filter(|attr| attr.path().is_ident("repr")) {
         for hint in attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)? {
@@ -178,6 +178,7 @@ fn is_repr_c(attrs: &[Attribute]) -> DiagnosticResult<()> {
         Ok(())
     } else {
         error("DST requires #[repr(C)] so the layout can be generated for allocation")
+            .add_help(name.span(), "add #[repr(C)] above this")
     }
 }
 
@@ -272,7 +273,7 @@ impl DstStruct {
         let name = ast.ident;
         let mirror_name = format_ident!("Uninit{}", name);
 
-        is_repr_c(&ast.attrs)?;
+        is_repr_c(&ast.attrs, &name)?;
         remove_doc_and_derive(&mut ast.attrs);
 
         let (fields, tail) = parse_struct(ast.data, &name)?;
@@ -667,7 +668,7 @@ mod tests {
             #[repr(C)]
             struct Foo { tail: [u8] }
         };
-        assert!(is_repr_c(&ast.attrs).is_ok());
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_ok());
     }
 
     #[test]
@@ -676,7 +677,7 @@ mod tests {
             #[derive(Debug)]
             struct Foo { tail: [u8] }
         };
-        assert!(is_repr_c(&ast.attrs).is_error());
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
     }
 
     #[test]
@@ -686,7 +687,7 @@ mod tests {
             #[repr(packed)]
             struct Foo { tail: [u8] }
         };
-        assert!(is_repr_c(&ast.attrs).is_error());
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
     }
 
     #[test]
@@ -695,7 +696,7 @@ mod tests {
             #[repr(C, packed)]
             struct Foo { tail: [u8] }
         };
-        assert!(is_repr_c(&ast.attrs).is_error());
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
     }
 
     #[test]
@@ -704,7 +705,7 @@ mod tests {
             #[repr(C, align(16))]
             struct Foo { tail: [u8] }
         };
-        assert!(is_repr_c(&ast.attrs).is_error());
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
     }
 
     #[test]

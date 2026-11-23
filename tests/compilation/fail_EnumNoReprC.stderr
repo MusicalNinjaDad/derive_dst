@@ -4,4 +4,9 @@ error: DST requires #[repr(C)] so the layout can be generated for allocation
 6 | #[derive(DST)]
   |          ^^^
   |
+help: add #[repr(C)] above this
+ --> tests/compilation/fail_EnumNoReprC.rs:7:6
+  |
+7 | enum NotAStruct {
+  |      ^^^^^^^^^^
   = note: this error originates in the derive macro `DST` (in Nightly builds, run with -Z macro-backtrace for more info)
