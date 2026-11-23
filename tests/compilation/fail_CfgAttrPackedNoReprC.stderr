@@ -1,0 +1,12 @@
+error: DST requires #[repr(C)] so the layout can be generated for allocation
+ --> tests/compilation/fail_CfgAttrPackedNoReprC.rs:9:10
+  |
+9 | #[derive(DST)]
+  |          ^^^
+  |
+help: change this to `#[repr(C)]`
+ --> tests/compilation/fail_CfgAttrPackedNoReprC.rs:8:1
+  |
+8 | #[cfg_attr(all(), repr(packed))]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: this error originates in the derive macro `DST` (in Nightly builds, run with -Z macro-backtrace for more info)

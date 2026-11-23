@@ -1,0 +1,23 @@
+error: DST requires exactly `#[repr(C)]`: `packed`, `align(N)` and other repr hints change the layout, so the generated allocation code would be unsound
+  --> tests/compilation/fail_CfgAttrReprCAndPacked.rs:10:10
+   |
+10 | #[derive(DST)]
+   |          ^^^
+   |
+help: remove this additional repr
+  --> tests/compilation/fail_CfgAttrReprCAndPacked.rs:9:1
+   |
+ 9 | #[cfg_attr(all(), repr(C, packed))]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: this error originates in the derive macro `DST` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: `#[repr(..)]` attribute is specified more than once
+ --> tests/compilation/fail_CfgAttrReprCAndPacked.rs:8:8
+  |
+8 | #[repr(C)]
+  |        ^
+9 | #[cfg_attr(all(), repr(C, packed))]
+  |                        ^
+  |
+  = note: for consistency, only specify the representation once
+  = note: `#[warn(repeated_reprs)]` (part of `#[warn(unused)]`) on by default

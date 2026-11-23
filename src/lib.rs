@@ -90,7 +90,9 @@
 //!   additional repr hints (`packed`, `align(N)`, ...) are rejected: they change the layout, so
 //!   the generated allocation code would be unsound. Note rustc merges multiple `#[repr(..)]`
 //!   attributes (e.g. `#[repr(C)]` on one line and `#[repr(packed)]` on the next is *not* a
-//!   compiler error), so every `repr` attribute is checked, not just the first one containing `C`;
+//!   compiler error), so every `repr` attribute is checked, not just the first one containing `C`.
+//!   A `repr` hidden behind a (possibly nested) `#[cfg_attr(...)]` gate is rejected as well: the
+//!   gate could be enabled, changing the layout while the generated code assumes plain `repr(C)`;
 //! - the **last field must be an unsized slice** `[T]`; only the last field may be unsized. The
 //!   generated impl headers carry the explicit bounds `where [T]: Pointee<Metadata = usize>, T: Sized`
 //!   — pinning the tail's fat-pointer metadata to `usize` (what the unsafe code relies on) and making
@@ -103,8 +105,9 @@
 //!
 //! # Errors
 //!
-//! Misuse (not a struct, missing `repr(C)`, extra repr hints like `packed`/`align`, sized tail,
-//! unsized non-tail field) is reported at compile time with spanned diagnostics (via
+//! Misuse (not a struct, missing `repr(C)`, extra repr hints like `packed`/`align`, a `repr`
+//! behind a `#[cfg_attr(...)]` gate, sized tail, unsized non-tail field) is reported at compile
+//! time with spanned diagnostics (via
 //! `proc_macro2_diagnostic`) and covered by compile-fail tests in `tests/compilation/`. At runtime
 //! the only failure mode is an uncomputable layout (e.g.
 //! the tail array overflows `isize::MAX`): every generated function then returns
@@ -745,6 +748,243 @@ mod tests {
             struct Foo { tail: [u8] }
         };
         assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    // --- `repr` hidden behind a (possibly nested) `#[cfg_attr(...)]` gate -----------
+    // rustc resolves `cfg_attr` before the derive runs, but the derive must still reject
+    // raw `cfg_attr` tokens (e.g. when another macro hands it unexpanded tokens): a
+    // cfg-gated `repr` would change the layout whenever the gate is enabled, so the
+    // generated allocation code would be unsound.
+
+    #[test]
+    fn cfg_attr_gated_repr_c_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "extra", repr(C))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    #[test]
+    fn cfg_attr_gated_repr_c_without_plain_repr_c_is_rejected() {
+        // the cfg-gate error propagates (via `?`) before the plain missing-repr(C) error
+        let ast: DeriveInput = parse_quote! {
+            #[cfg_attr(feature = "extra", repr(C))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    #[test]
+    fn cfg_attr_gated_packed_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "extra", repr(packed))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    #[test]
+    fn cfg_attr_gated_align_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(all(), repr(align(16)))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    #[test]
+    fn cfg_attr_gated_transparent_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "extra", repr(transparent))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    #[test]
+    fn cfg_attr_gated_bare_repr_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "extra", repr)]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    #[test]
+    fn cfg_attr_gated_repr_c_and_packed_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "extra", repr(C, packed))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    #[test]
+    fn cfg_attr_gating_repr_alongside_other_attrs_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "extra", derive(Debug), repr(packed))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    #[test]
+    fn cfg_attr_with_multiple_reprs_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "extra", repr(C), repr(packed))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    #[test]
+    fn cfg_attr_with_complex_condition_gating_repr_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(all(unix, feature = "extra"), repr(C))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    #[test]
+    fn nested_cfg_attr_gated_repr_c_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "a", cfg_attr(feature = "b", repr(C)))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    #[test]
+    fn nested_cfg_attr_gated_packed_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "a", cfg_attr(all(), repr(packed)))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    #[test]
+    fn triple_nested_cfg_attr_gated_align_is_rejected() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(a, cfg_attr(b, cfg_attr(c, repr(align(8)))))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_error());
+    }
+
+    #[test]
+    fn cfg_attr_with_non_repr_attrs_is_ok() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "extra", allow(dead_code), deprecated)]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_ok());
+    }
+
+    #[test]
+    fn cfg_attr_with_derive_is_ok() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(test, derive(Clone))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_ok());
+    }
+
+    #[test]
+    fn cfg_attr_doc_mentioning_repr_is_ok() {
+        // a doc string is a name-value meta, not a `repr` attribute — no false positive
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "extra", doc = "use `repr(C)`, never `repr(packed)`")]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_ok());
+    }
+
+    #[test]
+    fn cfg_attr_macro_attr_containing_repr_tokens_is_ok() {
+        // `my_macro(repr(C))` is a list with path `my_macro`, not a `repr` attribute
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "extra", my_macro(repr(C)))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_ok());
+    }
+
+    #[test]
+    fn nested_cfg_attr_without_repr_is_ok() {
+        let ast: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "a", cfg_attr(feature = "b", allow(dead_code)))]
+            struct Foo { tail: [u8] }
+        };
+        assert!(is_repr_c(&ast.attrs, &ast.ident).is_ok());
+    }
+
+    #[test]
+    fn check_for_cfg_attr_repr_ignores_non_cfg_attr() {
+        let attr: Attribute = parse_quote!(#[allow(dead_code)]);
+        assert!(check_for_cfg_attr_repr(&attr.meta).is_ok());
+        let attr: Attribute = parse_quote!(#[repr(C)]);
+        assert!(check_for_cfg_attr_repr(&attr.meta).is_ok());
+    }
+
+    #[test]
+    fn check_for_cfg_attr_repr_flags_gated_repr_c() {
+        let attr: Attribute = parse_quote!(#[cfg_attr(feature = "extra", repr(C))]);
+        assert!(check_for_cfg_attr_repr(&attr.meta).is_error());
+    }
+
+    #[test]
+    fn check_for_cfg_attr_repr_flags_nested_gated_repr() {
+        let attr: Attribute = parse_quote!(#[cfg_attr(a, cfg_attr(b, repr(align(8))))]);
+        assert!(check_for_cfg_attr_repr(&attr.meta).is_error());
+    }
+
+    #[test]
+    fn check_for_cfg_attr_repr_ok_without_repr() {
+        let attr: Attribute =
+            parse_quote!(#[cfg_attr(feature = "extra", allow(dead_code), deprecated)]);
+        assert!(check_for_cfg_attr_repr(&attr.meta).is_ok());
+    }
+
+    #[test]
+    fn parse_rejects_cfg_attr_gated_repr() {
+        let input: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "extra", repr(packed))]
+            #[derive(DST)]
+            struct Foo { tail: [u8] }
+        };
+        assert!(DstStruct::parse(input).is_error());
+    }
+
+    #[test]
+    fn parse_rejects_nested_cfg_attr_gated_repr_c() {
+        let input: DeriveInput = parse_quote! {
+            #[repr(C)]
+            #[cfg_attr(feature = "a", cfg_attr(feature = "b", repr(C)))]
+            #[derive(DST)]
+            struct Foo { tail: [u8] }
+        };
+        assert!(DstStruct::parse(input).is_error());
     }
 
     #[test]
