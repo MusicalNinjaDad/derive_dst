@@ -290,3 +290,4 @@ be suitably initialised, _including **all elements of the tail slice**_, before 
 [nomicon-DSTs]: https://doc.rust-lang.org/nomicon/exotic-sizes.html#dynamically-sized-types-dsts
 [Win-WPSIDDW]: https://learn.microsoft.com/en-us/windows/win32/api/setupapi/ns-setupapi-sp_device_interface_detail_data_w
 [linux-inotify]: https://man7.org/linux/man-pages/man7/inotify.7.html
+[linux-fiemap]: https://docs.kernel.org/filesystems/fiemap.html#c.fiemap
