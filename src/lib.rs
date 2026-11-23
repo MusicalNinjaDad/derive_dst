@@ -114,7 +114,7 @@
 
 use proc_macro::TokenStream as TokenStream1;
 use proc_macro2::TokenStream as TokenStream2;
-use proc_macro2_diagnostic::{ToTokens, prelude::*};
+use proc_macro2_diagnostic::{ToDiagnostic, ToTokens, prelude::*};
 use quote::{ToTokens as _, format_ident, quote};
 use syn::{
     Attribute, Data, DeriveInput, ExprAssign, Field, Fields, Generics, Ident, Meta, Token, Type,
@@ -162,23 +162,18 @@ pub(crate) struct DstStruct {
 }
 
 fn is_repr_c(attrs: &[Attribute], name: &Ident) -> DiagnosticResult<()> {
-    let mut has_c = false;
-    for attr in attrs.iter().filter(|attr| attr.path().is_ident("repr")) {
-        for hint in attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_separated_nonempty)? {
-            match &hint {
-                Meta::Path(path) if path.is_ident("C") => has_c = true,
-                _ => {
-                    return error("DST requires exactly `#[repr(C)]`: `packed`, `align(N)` and other repr hints change the layout, so the generated allocation code would be unsound")
-                        .add_help(hint.span(), "remove this repr hint")
-                }
-            }
-        }
-    }
-    if has_c {
-        Ok(())
-    } else {
-        error("DST requires #[repr(C)] so the layout can be generated for allocation")
-            .add_help(name.span(), "add #[repr(C)] above this")
+    let repr_c: Attribute = parse_quote!(#[repr(C)]);
+
+    match attrs.iter().find(|attr| attr.path().is_ident("repr") && *attr != &repr_c)
+    {
+        Some(repr) => error("DST requires exactly `#[repr(C)]`: `packed`, `align(N)` and other repr hints change the layout, so the generated allocation code would be unsound")
+                        .add_help(repr.span(), "change this to `#[repr(C)]`"),
+        None => attrs
+        .iter()
+        .find(|attr| *attr == &repr_c)
+        .map(|_|())
+        .or_error("DST requires #[repr(C)] so the layout can be generated for allocation")
+        .add_help(name.span(), "add #[repr(C)] above this")
     }
 }
 
