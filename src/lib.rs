@@ -285,6 +285,7 @@
 //! # Requirements
 //!
 //! - Nightly toolchain (and `feature(ptr_metadata)` not forbidden in config.toml)
+//! - `#![feature(ptr_metadata)]`
 //! - DST must:
 //!     - be `#[repr(C)]`, no additional alignment or packing specification
 //!     - have a *single*` unsized field as the *tail* (last field) as per the [nomicon][nomicon-DSTs]
