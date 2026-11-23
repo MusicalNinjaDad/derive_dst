@@ -5,11 +5,11 @@
 //! # Why
 //!
 //! The nomicon finishes the [section on DSTs][nomicon-DSTs] with the honest statement
-//! 
+//!
 //! > (Yes, custom DSTs are a largely half-baked feature for now.)
 //!
 //! and yet, various ffi functions make use of them.
-//! 
+//!
 //! Often this is to provide a filepath or other
 //! string as the final field (e.g. [`SP_DEVICE_INTERFACE_DETAIL_DATA_W`][Win-WPSIDDW] on Windows,
 //! [`inotify_event`][linux-inotify] on linux). Even with null-terminated strings, you still need to
@@ -75,7 +75,7 @@
 //! ```
 //!
 //! Behind the scenes this generates (an import-collision-safe version of).
-//! 
+//!
 //! The doc-comments are included in the generated code, so you can read them locally and in IDE
 //!
 //! ```
@@ -296,11 +296,8 @@ use syn::{
 };
 
 #[proc_macro_derive(DST)]
-/// Derives an `UninitFoo` mirror struct, safe allocating constructors `Foo::new_uninit_for_size`
-/// and `Foo::new_uninit_for_count`, an `unsafe` `UninitFoo::assume_init` and layout constructors
-/// `Foo::layout_for_size` / `Foo::layout_for_count` for a `#[repr(C)]` DST struct.
-///
-/// See the [crate-level documentation](crate) for the full contract and generated code.
+/// Derives the required polyfill to allow this DST. See the [crate-level documentation](crate)
+/// for the full contract and generated code.
 pub fn derive_dst(input: TokenStream1) -> TokenStream1 {
     impl_dst(input.into()).to_tokens()
 }
