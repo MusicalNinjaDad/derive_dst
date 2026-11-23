@@ -65,7 +65,7 @@ impl DeviceDetails {
 
         // API requires cbSize to be set to the size of the struct as if it were storing a single
         // `\0` as the DevicePath.
-        let cbsize = tail_offset + size_of::<u16>();
+        let cbsize = (tail_offset + size_of::<u16>()).next_multiple_of(layout.align());
         raw.cbSize.write(cbsize as u32);
 
         // SAFETY:
@@ -165,7 +165,7 @@ where
         Box<UninitDeviceDetails>,
         (Layout, usize, <[u16] as Pointee>::Metadata),
     ) {
-        let raw = match Global::allocate(&Global, layout) {
+        let raw = match Global::allocate_zeroed(&Global, layout) {
             Result::Ok(pointer) => pointer,
             Result::Err(_) => alloc::handle_alloc_error(layout),
         };
