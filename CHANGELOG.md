@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.1.2]
+
+### Technical
+
+- add summary doc to macro & as "tl;dr"
+
 ## [v0.1.1]
 
 ### Technical
