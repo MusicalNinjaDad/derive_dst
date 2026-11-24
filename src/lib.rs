@@ -17,7 +17,7 @@
 //!
 //! ## SAFETY
 //!
-//! - The constructors [`new_uninit_for_size`] and [`new_uninit_for_count`] return a mirror type
+//! - The constructors `new_uninit_for_size` and `new_uninit_for_count` return a mirror type
 //!   with all fields as zero-initialised `MaybeUninit<_>`
 //! - You should create your own constructor which
 //!   - calls a suitable uninit constructor
@@ -33,8 +33,9 @@
 //!
 //! You must ensure that:
 //!
-//!   - all fields are correctly initialised, either by using [`MaybeUninit::write`] or by
-//!     accepting zero initialisation as valid, *before* calling `assume_init`
+//!   - all fields are correctly initialised, either by using
+//!     [`MaybeUninit::write`][core::mem::MaybeUninit::write] or by accepting zero initialisation
+//!     as valid, *before* calling `assume_init`
 //!
 //! # Why
 //!
@@ -376,7 +377,7 @@ use syn::{
 ///
 /// # SAFETY
 ///
-/// - The constructors [`new_uninit_for_size`] and [`new_uninit_for_count`] return a mirror type
+/// - The constructors `new_uninit_for_size` and `new_uninit_for_count` return a mirror type
 ///   with all fields as zero-initialised `MaybeUninit<_>`
 /// - You should create your own constructor which
 ///   - calls a suitable uninit constructor
@@ -392,8 +393,10 @@ use syn::{
 ///
 /// You must ensure that:
 ///
-///   - all fields are correctly initialised, either by using [`MaybeUninit::write`] or by
-///     accepting zero initialisation as valid, *before* calling `assume_init`
+///
+///   - all fields are correctly initialised, either by using
+///     [`MaybeUninit::write`][core::mem::MaybeUninit::write] or by accepting zero initialisation
+///     as valid, *before* calling `assume_init`
 ///
 /// See the [crate-level documentation](crate) for a fully worked example and generated code.
 pub fn derive_dst(input: TokenStream1) -> TokenStream1 {

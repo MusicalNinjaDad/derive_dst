@@ -19,7 +19,7 @@ if not upheld.
 
 ### SAFETY
 
-- The constructors [`new_uninit_for_size`] and [`new_uninit_for_count`] return a mirror type
+- The constructors `new_uninit_for_size` and `new_uninit_for_count` return a mirror type
   with all fields as zero-initialised `MaybeUninit<_>`
 - You should create your own constructor which
   - calls a suitable uninit constructor
@@ -31,7 +31,7 @@ The macro ensures that:
   - the mirror type is zero initialised
   - the conversion from mirror to original is sound *if all fields are correctly initialised*
 You must ensure that:
-  - all fields are correctly initialised, either by using [`MaybeUninit::write`] or by
+  - all fields are correctly initialised, either by using `MaybeUninit::write` or by
     accepting zero initialisation as valid, *before* calling `assume_init`
 
 ## Why
