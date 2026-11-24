@@ -4,6 +4,36 @@ Provides `#[derive(DST)]` for `#[repr(C)]` structs whose **last field is an unsi
 (`[T]`) — the usual way to mirror a C/C++ "flexible array member" struct such as
 `SP_DEVICE_INTERFACE_DETAIL_DATA_W`.
 
+## tl;dr
+
+### Requirements
+
+The following will be validated by the macro and produce compilation errors with helpful hints
+if not upheld.
+
+- pure `#[repr(C)]` (not `packed`, not custom `align`-ed, not inside a `cfg_attr` gate)
+- all head fields (all except last field) are `Sized`
+- the dynamically-sized tail field (last field) is a slice `[T]` where
+  `T: Sized + Pointee<Metadata = usize>`
+- your crate allows `#![feature(ptr_metadata)]`
+
+### SAFETY
+
+- The constructors [`new_uninit_for_size`] and [`new_uninit_for_count`] return a mirror type
+  with all fields as zero-initialised `MaybeUninit<_>`
+- You should create your own constructor which
+  - calls a suitable uninit constructor
+  - ensures all fields are correctly initialised (either where zero is not valid for the stored
+    type or where your use case has additional specific requirements)
+  - then calls `assume_init` on the uninitialised mirror
+The macro ensures that:
+  - the types are well laid out, aligned & padded
+  - the mirror type is zero initialised
+  - the conversion from mirror to original is sound *if all fields are correctly initialised*
+You must ensure that:
+  - all fields are correctly initialised, either by using [`MaybeUninit::write`] or by
+    accepting zero initialisation as valid, *before* calling `assume_init`
+
 ## Why
 
 The nomicon finishes the [section on DSTs][nomicon-DSTs] with the honest statement
@@ -284,7 +314,7 @@ We recommend you build the docs locally via `cargo doc --document-private-items`
 requirements for `assume_init`
 
 The *`UninitMirror`* type is zero-initialised and not guaranteed to be valid. All fields must
-be suitably initialised, _including **all elements of the tail slice**_, before calling
+be suitably initialised, *including **all elements of the tail slice***, before calling
 `assume_init`.
 
 ## Alternatives
